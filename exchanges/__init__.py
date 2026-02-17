@@ -1,5 +1,15 @@
-from .exchange_manager import ExchangeManager
-from .binance_client import BinanceClient
-from .coindcx_client import CoinDCXClient
+"""
+Exchanges package exports for ARUNABHA SMART v10.1
 
-__all__ = ["ExchangeManager", "BinanceClient", "CoinDCXClient"]
+Modules:
+  exchange_manager  — unified REST interface (Binance / CoinDCX)
+  ws_feed           — Binance WebSocket kline feed (replaces REST polling)
+"""
+
+from .exchange_manager import ExchangeManager
+from .ws_feed          import BinanceWSFeed
+
+__all__ = [
+    "ExchangeManager",
+    "BinanceWSFeed",
+]
