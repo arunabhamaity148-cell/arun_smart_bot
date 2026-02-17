@@ -1,18 +1,19 @@
 """
-ARUNABHA SMART v10.1 — Main Bot
+ARUNABHA SMART v10.2 — Main Bot
 ════════════════════════════════
-Manual trading signal bot with anti-overfitting design.
-Deploys on Railway.app via webhook (no polling).
+Adaptive strategy bot — market regime auto-detection.
 
 Architecture:
-  • aiohttp web server      — health endpoint + Telegram webhook
-  • BinanceWSFeed           — real-time kline via WebSocket (no REST polling)
-  • FundingRateFilter       — async fetch with 8-min cache
-  • Candle-close callback   — triggers scan immediately when a candle closes
-  • PTB Application         — handles /start /status /signals commands
+  • aiohttp web server        — health + Telegram webhook
+  • BinanceWSFeed             — real-time kline via WebSocket
+  • FundingRateFilter         — async, 8-min cache
+  • Market Regime Detector    — auto-switches strategy per regime
+  • Candle-close callback     — scans on every candle close
 
-Run locally:
-  python main.py
+Regimes:
+  📈 TRENDING     → RSI 35/65, full position
+  ↔️  RANGING      → RSI 30/70, 0.7× position
+  😱 EXTREME_FEAR → RSI 25/75, 0.5× position, wider SL/TP
 
 Required env vars:
   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, WEBHOOK_URL,
@@ -29,12 +30,12 @@ from aiohttp import web
 from telegram import Update
 
 import config
-from alerts.telegram_alerts      import TelegramAlerts
-from core.smart_signal           import generate_signal, SignalResult
-from exchanges.exchange_manager  import ExchangeManager
-from exchanges.ws_feed           import BinanceWSFeed
+from alerts.telegram_alerts        import TelegramAlerts
+from core.smart_signal             import generate_signal, SignalResult
+from exchanges.exchange_manager    import ExchangeManager
+from exchanges.ws_feed             import BinanceWSFeed
 from exchanges.funding_rate_filter import FundingRateFilter
-from utils.time_utils            import is_sleep_time, today_ist_str, ts_label
+from utils.time_utils              import is_sleep_time, today_ist_str, ts_label
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -54,6 +55,7 @@ def _fresh_daily_stats() -> Dict[str, Any]:
         "longs":         0,
         "shorts":        0,
         "concurrent":    0,
+        "regime":        "UNKNOWN",
         "pairs":         [p.replace("/", "") for p in config.TRADING_PAIRS],
     }
 
@@ -63,14 +65,13 @@ STATE: Dict[str, Any] = {
     "signals_today":  [],
     "active_signals": set(),
     "last_scan":      None,
+    "current_regime": "UNKNOWN",
 }
 
 _scan_locks: Dict[str, asyncio.Lock] = {
     sym: asyncio.Lock() for sym in config.TRADING_PAIRS
 }
 
-
-# ─── Day-reset ────────────────────────────────────────────────────────────────
 
 def _maybe_reset_day() -> None:
     today = today_ist_str()
@@ -89,10 +90,6 @@ async def scan_symbol(
     alerts:    TelegramAlerts,
     funding:   FundingRateFilter,
 ) -> None:
-    """
-    Triggered by WebSocket when a candle closes for symbol/timeframe.
-    Fetches all required data then runs the full signal pipeline.
-    """
     _maybe_reset_day()
 
     if is_sleep_time():
@@ -113,54 +110,57 @@ async def scan_symbol(
         return
 
     async with lock:
-        # ── Fetch data (all from WS cache — zero REST calls for OHLCV) ───────
+        # ── Fetch OHLCV (WS cache — zero REST) ────────────────────────────────
         try:
             ohlcv    = await exchange.fetch_ohlcv(symbol, timeframe, config.CANDLE_LOOKBACK)
             ohlcv_1h = await exchange.fetch_ohlcv(symbol, "1h", config.CANDLE_LOOKBACK)
             ob       = await exchange.fetch_orderbook(symbol, config.ORDERBOOK_DEPTH)
         except Exception as exc:
-            logger.warning("Data fetch failed for %s: %s", symbol, exc)
+            logger.warning("Data fetch failed %s: %s", symbol, exc)
             return
 
-        # BTC context (also from WS cache)
+        # BTC context (15m for correlation, 1h for regime)
         try:
-            btc_ohlcv = await exchange.fetch_ohlcv(
-                config.BTC_PAIR, "15m", config.CANDLE_LOOKBACK
-            )
+            btc_ohlcv    = await exchange.fetch_ohlcv(config.BTC_PAIR, "15m", config.CANDLE_LOOKBACK)
+            btc_ohlcv_1h = await exchange.fetch_ohlcv(config.BTC_PAIR, "1h", config.CANDLE_LOOKBACK)
         except Exception:
-            btc_ohlcv = []
+            btc_ohlcv    = []
+            btc_ohlcv_1h = []
 
-        # ── Funding rate (REST, cached 8 min — cheap) ─────────────────────────
-        funding_ok, funding_lbl = await funding.passes(symbol=symbol, direction="LONG")
-        # We pass funding_ok as None here and let generate_signal compute it
-        # after direction is determined — so we fetch it for both directions
-        funding_long_ok,  fl  = await funding.passes(symbol=symbol, direction="LONG")
-        funding_short_ok, fs  = await funding.passes(symbol=symbol, direction="SHORT")
+        # ── Funding rate (cached 8 min) ────────────────────────────────────────
+        btc_funding = await funding.get_funding_rate(config.BTC_PAIR)
+        funding_long_ok,  fl = await funding.passes(symbol=symbol, direction="LONG")
+        funding_short_ok, fs = await funding.passes(symbol=symbol, direction="SHORT")
 
-        # ── Run signal pipeline ───────────────────────────────────────────────
+        # ── Signal pipeline ────────────────────────────────────────────────────
         try:
-            # Pass both funding results; generate_signal picks the right one
-            # based on determined direction
             signal: Optional[SignalResult] = generate_signal(
-                symbol           = symbol,
-                ohlcv            = ohlcv,
-                orderbook        = ob,
-                btc_ohlcv        = btc_ohlcv,
-                account_size_usd = config.ACCOUNT_SIZE_USD,
-                ohlcv_1h         = ohlcv_1h,
-                funding_long_ok  = funding_long_ok,
-                funding_short_ok = funding_short_ok,
-                funding_long_lbl = fl,
-                funding_short_lbl= fs,
+                symbol            = symbol,
+                ohlcv             = ohlcv,
+                orderbook         = ob,
+                btc_ohlcv         = btc_ohlcv,
+                account_size_usd  = config.ACCOUNT_SIZE_USD,
+                ohlcv_1h          = ohlcv_1h,
+                funding_long_ok   = funding_long_ok,
+                funding_short_ok  = funding_short_ok,
+                funding_long_lbl  = fl,
+                funding_short_lbl = fs,
+                btc_funding_rate  = btc_funding,
+                btc_ohlcv_1h      = btc_ohlcv_1h,
             )
         except Exception as exc:
-            logger.error("Signal generation error %s: %s", symbol, exc, exc_info=True)
+            logger.error("Signal error %s: %s", symbol, exc, exc_info=True)
             return
+
+        # Update current regime in state (for /status command)
+        if signal:
+            STATE["current_regime"] = signal.regime
+            STATE["daily_stats"]["regime"] = signal.regime
 
         if signal is None:
             return
 
-        # ── Record and alert ──────────────────────────────────────────────────
+        # ── Record & alert ────────────────────────────────────────────────────
         stats["total_signals"] += 1
         if signal.direction == "LONG":
             stats["longs"] += 1
@@ -169,26 +169,27 @@ async def scan_symbol(
         stats["concurrent"] = len(active) + 1
 
         active.add(symbol)
-
         STATE["signals_today"].append({
             "symbol":    symbol,
             "direction": signal.direction,
             "time":      ts_label(),
             "rr_ratio":  signal.rr_ratio,
             "quality":   signal.quality,
+            "regime":    signal.regime,
         })
 
         STATE["last_scan"] = datetime.utcnow().isoformat()
         await alerts.send_signal(signal)
 
         logger.info(
-            "✅ Signal sent: %s %s | Grade=%s | Today: %d/%d",
-            symbol, signal.direction, signal.quality,
+            "✅ Signal: %s %s [%s] Grade=%s Regime=%s | Today: %d/%d",
+            symbol, signal.direction, signal.timeframe,
+            signal.quality, signal.regime,
             stats["total_signals"], config.MAX_SIGNALS_DAY,
         )
 
 
-# ─── WebSocket candle-close callback ─────────────────────────────────────────
+# ─── WebSocket callback ───────────────────────────────────────────────────────
 
 def make_candle_callback(
     exchange: ExchangeManager,
@@ -213,10 +214,11 @@ def make_candle_callback(
 async def health_handler(request: web.Request) -> web.Response:
     stats = STATE["daily_stats"]
     return web.json_response({
-        "status":        "ok",
-        "bot":           f"{config.BOT_NAME} {config.BOT_VERSION}",
-        "signals_today": stats["total_signals"],
-        "last_scan":     STATE.get("last_scan"),
+        "status":         "ok",
+        "bot":            f"{config.BOT_NAME} {config.BOT_VERSION}",
+        "signals_today":  stats["total_signals"],
+        "regime":         STATE.get("current_regime", "UNKNOWN"),
+        "last_scan":      STATE.get("last_scan"),
     })
 
 
@@ -227,7 +229,7 @@ def make_webhook_handler(ptb_app):
             update = Update.de_json(data, ptb_app.bot)
             await ptb_app.process_update(update)
         except Exception as exc:
-            logger.error("Webhook processing error: %s", exc)
+            logger.error("Webhook error: %s", exc)
         return web.Response(text="ok")
     return webhook_handler
 
@@ -236,77 +238,72 @@ def make_webhook_handler(ptb_app):
 
 async def main() -> None:
     if not config.TELEGRAM_BOT_TOKEN:
-        logger.critical("TELEGRAM_BOT_TOKEN not set — exiting")
+        logger.critical("TELEGRAM_BOT_TOKEN not set")
         sys.exit(1)
     if not config.TELEGRAM_CHAT_ID:
-        logger.critical("TELEGRAM_CHAT_ID not set — exiting")
+        logger.critical("TELEGRAM_CHAT_ID not set")
         sys.exit(1)
 
-    # ── Exchange (REST — seeding + orderbook only) ─────────────────────────
     exchange = ExchangeManager()
     try:
         await exchange.connect()
     except Exception as exc:
-        logger.critical("Exchange connection failed: %s — exiting", exc)
+        logger.critical("Exchange failed: %s", exc)
         sys.exit(1)
 
-    # ── Funding rate filter ────────────────────────────────────────────────
     funding = FundingRateFilter()
     await funding.connect()
     logger.info("💸 Funding rate filter ready")
 
-    # ── Telegram ──────────────────────────────────────────────────────────
     alerts  = TelegramAlerts(STATE)
     ptb_app = alerts.build_application()
     await ptb_app.initialize()
 
     if config.WEBHOOK_URL:
-        webhook_endpoint = f"{config.WEBHOOK_URL}{config.WEBHOOK_PATH}"
         try:
-            await ptb_app.bot.set_webhook(webhook_endpoint)
-            logger.info("Webhook set to %s", webhook_endpoint)
+            await ptb_app.bot.set_webhook(f"{config.WEBHOOK_URL}{config.WEBHOOK_PATH}")
+            logger.info("Webhook set")
         except Exception as exc:
-            logger.warning("Could not set webhook: %s", exc)
+            logger.warning("Webhook failed: %s", exc)
 
-    # ── WebSocket feed ─────────────────────────────────────────────────────
     ws_feed = BinanceWSFeed(
         on_candle_close=make_candle_callback(exchange, alerts, funding)
     )
     exchange.set_ws_feed(ws_feed)
     await ws_feed.seed_from_rest(exchange)
     await ws_feed.start()
-    logger.info("🔌 WebSocket feed live — no more polling!")
+    logger.info("🔌 WebSocket live!")
 
-    # ── Web server ────────────────────────────────────────────────────────
     web_app = web.Application()
     web_app.router.add_get(config.HEALTH_PATH,   health_handler)
     web_app.router.add_post(config.WEBHOOK_PATH, make_webhook_handler(ptb_app))
 
     runner = web.AppRunner(web_app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", config.WEBHOOK_PORT)
-    await site.start()
-    logger.info("Web server listening on port %d", config.WEBHOOK_PORT)
+    await web.TCPSite(runner, "0.0.0.0", config.WEBHOOK_PORT).start()
+    logger.info("Web server on port %d", config.WEBHOOK_PORT)
 
     try:
         await alerts.send_startup()
     except Exception as exc:
-        logger.warning("Startup notification failed: %s", exc)
+        logger.warning("Startup msg failed: %s", exc)
 
-    logger.info("✅ %s %s is running! (WebSocket + MTF + Funding + VPOC)", config.BOT_NAME, config.BOT_VERSION)
+    logger.info(
+        "✅ %s %s running! (WebSocket + MTF + Funding + VPOC + Adaptive Regime)",
+        config.BOT_NAME, config.BOT_VERSION,
+    )
 
     try:
         await asyncio.Event().wait()
     except (KeyboardInterrupt, asyncio.CancelledError):
-        logger.info("Shutdown signal received")
+        logger.info("Shutdown")
 
-    # ── Cleanup ───────────────────────────────────────────────────────────
     await ws_feed.stop()
     await funding.close()
     await ptb_app.shutdown()
     await exchange.close()
     await runner.cleanup()
-    logger.info("Bot shut down cleanly. Goodbye! 👋")
+    logger.info("Goodbye! 👋")
 
 
 if __name__ == "__main__":
