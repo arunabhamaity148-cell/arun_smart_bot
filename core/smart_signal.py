@@ -1,5 +1,5 @@
 """
-Smart Signal Engine — ARUNABHA SMART v10.0
+Smart Signal Engine — ARUNABHA SMART v10.1
 
 SIMPLE CORE RULES (fixed, never retrained):
   LONG  → RSI < 35  AND EMA9 > EMA21 AND Volume > 1.2× avg
@@ -10,6 +10,11 @@ SMART MONEY CONCEPT (SMC) LAYER:
   • Order Block identification (last bearish candle before bullish surge)
   • Fair Value Gap (FVG/imbalance zones)
   • Premium / Discount zones (Fibonacci 50% level)
+
+NEW v10.1 LAYERS:
+  • MTF Confirmation  — 1h structure must agree with 15m entry
+  • Funding Rate      — blocks entries in extreme-funded crowded trades
+  • VPOC / Volume Profile — entry must be in high-volume confluence zone
 """
 
 import logging
@@ -19,9 +24,11 @@ from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
 
 import config
-from .timeframe_selector import select_timeframe
-from .smart_filters      import all_filters_pass
-from .smart_sizing       import calculate_position_size
+from .timeframe_selector  import select_timeframe
+from .smart_filters       import all_filters_pass
+from .smart_sizing        import calculate_position_size
+from .vpoc_profile        import build_volume_profile, vpoc_confirms, vpoc_label
+from .mtf_confirmation    import mtf_confirms, mtf_bias_label
 
 logger = logging.getLogger(__name__)
 
@@ -29,22 +36,14 @@ logger = logging.getLogger(__name__)
 # ─── SMC Data helpers ────────────────────────────────────────────────────────
 
 def _detect_market_structure(highs: np.ndarray, lows: np.ndarray) -> str:
-    """
-    Detects recent market structure:
-    BULLISH = Higher Highs + Higher Lows (BOS up)
-    BEARISH = Lower Highs + Lower Lows (BOS down)
-    NEUTRAL = No clear structure
-    """
     if len(highs) < 10:
         return "NEUTRAL"
-    # Use last 10 swing pivots
-    h = highs[-10:]
-    l = lows[-10:]
-    hh = h[-1] > h[-5]   # recent high > prior high
-    hl = l[-1] > l[-5]   # recent low  > prior low
-    lh = h[-1] < h[-5]   # recent high < prior high
-    ll = l[-1] < l[-5]   # recent low  < prior low
-
+    h  = highs[-10:]
+    l  = lows[-10:]
+    hh = h[-1] > h[-5]
+    hl = l[-1] > l[-5]
+    lh = h[-1] < h[-5]
+    ll = l[-1] < l[-5]
     if hh and hl:
         return "BULLISH"
     elif lh and ll:
@@ -55,35 +54,23 @@ def _detect_market_structure(highs: np.ndarray, lows: np.ndarray) -> str:
 def _find_order_block(
     opens: np.ndarray, closes: np.ndarray,
     highs: np.ndarray, lows: np.ndarray,
-    direction: str,
-    lookback: int = 20,
+    direction: str, lookback: int = 20,
 ) -> Optional[Tuple[float, float]]:
-    """
-    Order Block = last opposing candle before a strong impulse move.
-    LONG  OB = last bearish (red) candle before bullish impulse
-    SHORT OB = last bullish (green) candle before bearish impulse
-
-    Returns (ob_low, ob_high) or None.
-    """
     if len(closes) < lookback + 3:
         return None
-
     arr_o = opens[-lookback:]
     arr_c = closes[-lookback:]
     arr_h = highs[-lookback:]
     arr_l = lows[-lookback:]
-
     if direction == "LONG":
-        # Find last bearish candle followed by 2+ consecutive bullish candles
         for i in range(len(arr_c) - 3, 1, -1):
-            if arr_c[i] < arr_o[i]:   # bearish candle
-                if arr_c[i+1] > arr_o[i+1] and arr_c[i+2] > arr_o[i+2]:  # 2 bull follow
+            if arr_c[i] < arr_o[i]:
+                if arr_c[i+1] > arr_o[i+1] and arr_c[i+2] > arr_o[i+2]:
                     return (float(arr_l[i]), float(arr_h[i]))
     else:
-        # Find last bullish candle followed by 2+ consecutive bearish candles
         for i in range(len(arr_c) - 3, 1, -1):
-            if arr_c[i] > arr_o[i]:   # bullish candle
-                if arr_c[i+1] < arr_o[i+1] and arr_c[i+2] < arr_o[i+2]:  # 2 bear follow
+            if arr_c[i] > arr_o[i]:
+                if arr_c[i+1] < arr_o[i+1] and arr_c[i+2] < arr_o[i+2]:
                     return (float(arr_l[i]), float(arr_h[i]))
     return None
 
@@ -91,68 +78,47 @@ def _find_order_block(
 def _find_fvg(
     highs: np.ndarray, lows: np.ndarray, direction: str, lookback: int = 15
 ) -> Optional[Tuple[float, float]]:
-    """
-    Fair Value Gap (FVG) = 3-candle imbalance zone.
-    Bullish FVG: candle[i+2].low > candle[i].high  (gap between them)
-    Bearish FVG: candle[i+2].high < candle[i].low
-    Returns (gap_low, gap_high) of the most recent FVG.
-    """
     if len(highs) < lookback + 3:
         return None
-
     h = highs[-lookback:]
     l = lows[-lookback:]
-
     if direction == "LONG":
         for i in range(len(h) - 3, 0, -1):
-            if l[i+2] > h[i]:   # bullish FVG
+            if l[i+2] > h[i]:
                 return (float(h[i]), float(l[i+2]))
     else:
         for i in range(len(h) - 3, 0, -1):
-            if h[i+2] < l[i]:   # bearish FVG
+            if h[i+2] < l[i]:
                 return (float(h[i+2]), float(l[i]))
     return None
 
 
 def _premium_discount_zone(highs: np.ndarray, lows: np.ndarray) -> Dict[str, float]:
-    """
-    Fibonacci 50% equilibrium of the current swing range.
-    DISCOUNT zone = below 50% (good for LONG entries)
-    PREMIUM zone  = above 50% (good for SHORT entries)
-    """
     if len(highs) < 20:
         return {"equilibrium": 0.0, "premium_start": 0.0, "discount_end": 0.0}
     swing_high = float(np.max(highs[-20:]))
     swing_low  = float(np.min(lows[-20:]))
     equil = (swing_high + swing_low) / 2
     return {
-        "equilibrium":    equil,
-        "premium_start":  equil,     # above = premium
-        "discount_end":   equil,     # below = discount
-        "swing_high":     swing_high,
-        "swing_low":      swing_low,
+        "equilibrium":   equil,
+        "premium_start": equil,
+        "discount_end":  equil,
+        "swing_high":    swing_high,
+        "swing_low":     swing_low,
     }
 
 
 def _smc_confluence(
-    direction: str,
-    entry: float,
-    opens: np.ndarray,
-    closes: np.ndarray,
-    highs: np.ndarray,
-    lows: np.ndarray,
+    direction: str, entry: float,
+    opens: np.ndarray, closes: np.ndarray,
+    highs: np.ndarray, lows: np.ndarray,
 ) -> Dict[str, Any]:
-    """
-    Full SMC analysis. Returns confluence dict with boolean flags
-    and key price levels.
-    """
     structure   = _detect_market_structure(highs, lows)
     order_block = _find_order_block(opens, closes, highs, lows, direction)
     fvg         = _find_fvg(highs, lows, direction)
     pd_zone     = _premium_discount_zone(highs, lows)
     equil       = pd_zone["equilibrium"]
 
-    # Structure alignment
     if direction == "LONG":
         structure_ok = structure == "BULLISH"
         in_discount  = entry < equil and equil > 0
@@ -160,14 +126,12 @@ def _smc_confluence(
         structure_ok = structure == "BEARISH"
         in_discount  = entry > equil and equil > 0
 
-    # Near Order Block?
     near_ob = False
     if order_block:
         ob_low, ob_high = order_block
         near_ob = ob_low <= entry <= ob_high * 1.005 if direction == "LONG" \
              else ob_low * 0.995 <= entry <= ob_high
 
-    # Inside FVG?
     in_fvg = False
     if fvg:
         fvg_low, fvg_high = fvg
@@ -176,17 +140,17 @@ def _smc_confluence(
     smc_score = sum([structure_ok, in_discount, near_ob, in_fvg])
 
     result = {
-        "structure":     structure,
-        "structure_ok":  structure_ok,
-        "in_discount":   in_discount,
-        "near_ob":       near_ob,
-        "in_fvg":        in_fvg,
-        "smc_score":     smc_score,        # 0-4
-        "order_block":   order_block,
-        "fvg":           fvg,
-        "equilibrium":   equil,
-        "swing_high":    pd_zone.get("swing_high", 0),
-        "swing_low":     pd_zone.get("swing_low", 0),
+        "structure":    structure,
+        "structure_ok": structure_ok,
+        "in_discount":  in_discount,
+        "near_ob":      near_ob,
+        "in_fvg":       in_fvg,
+        "smc_score":    smc_score,
+        "order_block":  order_block,
+        "fvg":          fvg,
+        "equilibrium":  equil,
+        "swing_high":   pd_zone.get("swing_high", 0),
+        "swing_low":    pd_zone.get("swing_low", 0),
     }
     logger.debug(
         "SMC [%s] structure=%s discount=%s ob=%s fvg=%s score=%d",
@@ -217,6 +181,10 @@ class SignalResult:
     smc:            Dict[str, Any]   = field(default_factory=dict)
     quality:        str = "B"
     skip_reason:    str = ""
+    # v10.1 extras (for Telegram alerts)
+    mtf_label:      str = ""
+    vpoc_label:     str = ""
+    funding_label:  str = ""
 
 
 # ─── Indicator helpers ────────────────────────────────────────────────────────
@@ -248,7 +216,7 @@ def _rsi(closes: np.ndarray, period: int = 14) -> float:
 
 
 def _atr(highs, lows, closes, period=14):
-    n   = len(closes)
+    n = len(closes)
     if n < 2:
         return 0.0
     trs = [max(highs[i]-lows[i], abs(highs[i]-closes[i-1]), abs(lows[i]-closes[i-1]))
@@ -270,16 +238,22 @@ def generate_signal(
     orderbook:        Dict[str, Any],
     btc_ohlcv:        List[List[float]],
     account_size_usd: float = None,
+    # v10.1 new inputs
+    ohlcv_1h:          Optional[List[List[float]]] = None,
+    funding_long_ok:   Optional[bool]               = None,
+    funding_short_ok:  Optional[bool]               = None,
+    funding_long_lbl:  str                          = "",
+    funding_short_lbl: str                          = "",
 ) -> Optional[SignalResult]:
     """
     Full signal pipeline:
-    1. Core rules  (RSI + EMA + Volume)
-    2. RR check    (min 1.5:1)
-    3. SMC layer   (Market Structure + OB + FVG + PD Zone)
-    4. Smart Filters (6 context filters, 4 must pass)
+    1. Core rules       (RSI + EMA + Volume)
+    2. RR check         (min 1.5:1)
+    3. SMC layer        (Market Structure + OB + FVG + PD Zone)
+    4. Smart Filters v2 (9 context filters: original 6 + MTF + Funding + VPOC)
     5. Position sizing
 
-    Returns SignalResult or None. All skip reasons logged at INFO level.
+    Returns SignalResult or None.
     """
     if account_size_usd is None:
         account_size_usd = config.ACCOUNT_SIZE_USD
@@ -351,9 +325,6 @@ def generate_signal(
 
     # ── SMC Layer ────────────────────────────────────────────────────────────
     smc = _smc_confluence(direction, entry, opens, closes, highs, lows)
-
-    # SMC gate: at least 1/4 SMC factor must align (soft filter, not hard gate)
-    # Log SMC details always
     logger.info(
         "📐 SMC %s [%s] %s | Structure=%s Discount=%s OB=%s FVG=%s Score=%d/4",
         symbol, timeframe, direction,
@@ -361,10 +332,29 @@ def generate_signal(
         smc["smc_score"],
     )
 
-    # ── Smart Filters ────────────────────────────────────────────────────────
+    # ── Direction-specific funding ────────────────────────────────────────────
+    funding_ok  = funding_long_ok  if direction == "LONG" else funding_short_ok
+    funding_lbl = funding_long_lbl if direction == "LONG" else funding_short_lbl
+
+    # ── VPOC / Volume Profile ─────────────────────────────────────────────────
+    profile       = build_volume_profile(ohlcv)
+    vpoc_ok, _    = vpoc_confirms(direction, entry, profile)
+    vpoc_lbl      = vpoc_label(profile, entry)
+
+    # ── MTF label ────────────────────────────────────────────────────────────
+    mtf_lbl = mtf_bias_label(ohlcv_1h or [])
+
+    # ── Smart Filters (9 filters) ─────────────────────────────────────────────
     passed, filter_detail = all_filters_pass(
-        direction=direction, entry_price=entry, ohlcv=ohlcv,
-        orderbook=orderbook, btc_ohlcv=btc_ohlcv, alt_ohlcv=ohlcv,
+        direction    = direction,
+        entry_price  = entry,
+        ohlcv        = ohlcv,
+        orderbook    = orderbook,
+        btc_ohlcv    = btc_ohlcv,
+        alt_ohlcv    = ohlcv,
+        ohlcv_1h     = ohlcv_1h,
+        funding_ok   = funding_ok,
+        vpoc_ok      = vpoc_ok,
     )
 
     filters_passed = sum(1 for v in filter_detail.values() if v)
@@ -387,37 +377,51 @@ def generate_signal(
         )
         return None
 
-    # ── Quality Grade ────────────────────────────────────────────────────────
-    # Combine filters + SMC score for final grade
+    # ── Quality Grade ─────────────────────────────────────────────────────────
+    # 9 filters + 4 SMC = 13 max; thresholds adjusted for v10.1
     total_score = filters_passed + smc["smc_score"]
-    if total_score >= 9:        # 6 filters + 3+ SMC
+    if total_score >= 11:
         quality = "A+"
-    elif total_score >= 8:
+    elif total_score >= 9:
         quality = "A"
-    elif total_score >= 6:
+    elif total_score >= 7:
         quality = "B"
     else:
         quality = "C"
 
-    # ── Position Sizing ──────────────────────────────────────────────────────
+    # ── Position Sizing ───────────────────────────────────────────────────────
     sizing = calculate_position_size(account_size_usd, entry, stop_loss, ohlcv)
 
     logger.info(
         "✅ SIGNAL %s [%s] %s | Entry=%.4f SL=%.4f TP=%.4f | "
         "RR=%.2f | RSI=%.1f | Vol=%.2f× | "
-        "SMC=%d/4 | Filters=%d/%d | Grade=%s",
+        "SMC=%d/4 | Filters=%d/%d | Grade=%s | MTF=%s | %s | Funding=%s",
         symbol, timeframe, direction,
         entry, stop_loss, take_profit,
         rr_ratio, rsi, vol_ratio,
         smc["smc_score"], filters_passed, filters_total, quality,
+        mtf_lbl, vpoc_lbl, funding_lbl or "N/A",
     )
 
     return SignalResult(
-        symbol=symbol, direction=direction, timeframe=timeframe,
-        entry=round(entry,6), stop_loss=round(stop_loss,6), take_profit=round(take_profit,6),
-        rr_ratio=round(rr_ratio,2), rsi=rsi,
-        ema_fast=round(ema_fast,6), ema_slow=round(ema_slow,6),
-        volume_ratio=round(vol_ratio,2),
-        filters_passed=filters_passed, filters_total=filters_total,
-        filter_detail=filter_detail, sizing=sizing, smc=smc, quality=quality,
+        symbol         = symbol,
+        direction      = direction,
+        timeframe      = timeframe,
+        entry          = round(entry, 6),
+        stop_loss      = round(stop_loss, 6),
+        take_profit    = round(take_profit, 6),
+        rr_ratio       = round(rr_ratio, 2),
+        rsi            = rsi,
+        ema_fast       = round(ema_fast, 6),
+        ema_slow       = round(ema_slow, 6),
+        volume_ratio   = round(vol_ratio, 2),
+        filters_passed = filters_passed,
+        filters_total  = filters_total,
+        filter_detail  = filter_detail,
+        sizing         = sizing,
+        smc            = smc,
+        quality        = quality,
+        mtf_label      = mtf_lbl,
+        vpoc_label     = vpoc_lbl,
+        funding_label  = funding_label,
     )
