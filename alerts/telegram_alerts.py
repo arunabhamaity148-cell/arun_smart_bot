@@ -1,5 +1,5 @@
 """
-Telegram Alerts — ARUNABHA SMART v10.1
+Telegram Alerts — ARUNABHA SMART v10.2
 Rich signal formatting with SMC + MTF + Funding + VPOC details.
 """
 
@@ -119,6 +119,7 @@ def format_signal_message(signal: SignalResult) -> str:
         f"└──────────────────────────────────\n"
         f"\n"
         f"┌─ *v10\\.1 CONFLUENCE* ────────────\n"
+        f"{regime_line}"
         f"{mtf_line}"
         f"{vpoc_line}"
         f"{funding_line}"
