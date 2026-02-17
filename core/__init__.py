@@ -1,6 +1,7 @@
 """
 Core signal engine exports for ARUNABHA SMART v10.1
 """
+.market_regime import detect_regime, RegimeParams, regime_label
 from .mtf_confirmation import mtf_confirms, mtf_bias_label, get_htf_bias
 from .vpoc_profile     import build_volume_profile, vpoc_confirms, vpoc_label
 from .smart_signal         import generate_signal, SignalResult
