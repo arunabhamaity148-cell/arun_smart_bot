@@ -1,5 +1,5 @@
 """
-Core signal engine exports for ARUNABHA SMART v10.0
+Core signal engine exports for ARUNABHA SMART v10.1
 """
 
 from .smart_signal         import generate_signal, SignalResult
