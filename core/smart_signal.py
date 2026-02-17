@@ -1,20 +1,21 @@
 """
-Smart Signal Engine — ARUNABHA SMART v10.1
+Smart Signal Engine — ARUNABHA SMART v10.2
 
-SIMPLE CORE RULES (fixed, never retrained):
-  LONG  → RSI < 35  AND EMA9 > EMA21 AND Volume > 1.2× avg
-  SHORT → RSI > 65  AND EMA9 < EMA21 AND Volume > 1.2× avg
+ADAPTIVE STRATEGY — Market Regime-aware:
+  ① TRENDING      → RSI 35/65, SL 1.5×ATR, TP 2.5×ATR, Full size
+  ② RANGING       → RSI 30/70, SL 1.2×ATR, TP 1.8×ATR, 0.7× size
+  ③ EXTREME_FEAR  → RSI 25/75, SL 2.0×ATR, TP 3.5×ATR, 0.5× size
 
 SMART MONEY CONCEPT (SMC) LAYER:
-  • Market Structure (BOS/CHOCH detection)
-  • Order Block identification (last bearish candle before bullish surge)
-  • Fair Value Gap (FVG/imbalance zones)
-  • Premium / Discount zones (Fibonacci 50% level)
+  • Market Structure (BOS/CHOCH)
+  • Order Block
+  • Fair Value Gap (FVG)
+  • Premium / Discount zones
 
-NEW v10.1 LAYERS:
-  • MTF Confirmation  — 1h structure must agree with 15m entry
-  • Funding Rate      — blocks entries in extreme-funded crowded trades
-  • VPOC / Volume Profile — entry must be in high-volume confluence zone
+v10.1 LAYERS:
+  • MTF Confirmation (1h bias)
+  • Funding Rate Filter
+  • VPOC / Volume Profile
 """
 
 import logging
@@ -24,16 +25,17 @@ from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
 
 import config
-from .timeframe_selector  import select_timeframe
-from .smart_filters       import all_filters_pass
-from .smart_sizing        import calculate_position_size
-from .vpoc_profile        import build_volume_profile, vpoc_confirms, vpoc_label
-from .mtf_confirmation    import mtf_confirms, mtf_bias_label
+from .timeframe_selector import select_timeframe
+from .smart_filters      import all_filters_pass
+from .smart_sizing       import calculate_position_size
+from .vpoc_profile       import build_volume_profile, vpoc_confirms, vpoc_label
+from .mtf_confirmation   import mtf_confirms, mtf_bias_label
+from .market_regime      import detect_regime, RegimeParams, regime_label, REGIME_RANGING
 
 logger = logging.getLogger(__name__)
 
 
-# ─── SMC Data helpers ────────────────────────────────────────────────────────
+# ─── SMC helpers ─────────────────────────────────────────────────────────────
 
 def _detect_market_structure(highs: np.ndarray, lows: np.ndarray) -> str:
     if len(highs) < 10:
@@ -76,7 +78,8 @@ def _find_order_block(
 
 
 def _find_fvg(
-    highs: np.ndarray, lows: np.ndarray, direction: str, lookback: int = 15
+    highs: np.ndarray, lows: np.ndarray,
+    direction: str, lookback: int = 15,
 ) -> Optional[Tuple[float, float]]:
     if len(highs) < lookback + 3:
         return None
@@ -138,8 +141,7 @@ def _smc_confluence(
         in_fvg = fvg_low <= entry <= fvg_high
 
     smc_score = sum([structure_ok, in_discount, near_ob, in_fvg])
-
-    result = {
+    return {
         "structure":    structure,
         "structure_ok": structure_ok,
         "in_discount":  in_discount,
@@ -152,39 +154,6 @@ def _smc_confluence(
         "swing_high":   pd_zone.get("swing_high", 0),
         "swing_low":    pd_zone.get("swing_low", 0),
     }
-    logger.debug(
-        "SMC [%s] structure=%s discount=%s ob=%s fvg=%s score=%d",
-        direction, structure, in_discount, near_ob, in_fvg, smc_score,
-    )
-    return result
-
-
-# ─── Data classes ─────────────────────────────────────────────────────────────
-
-@dataclass
-class SignalResult:
-    symbol:         str
-    direction:      str
-    timeframe:      str
-    entry:          float
-    stop_loss:      float
-    take_profit:    float
-    rr_ratio:       float
-    rsi:            float
-    ema_fast:       float
-    ema_slow:       float
-    volume_ratio:   float
-    filters_passed: int
-    filters_total:  int
-    filter_detail:  Dict[str, bool]  = field(default_factory=dict)
-    sizing:         Dict[str, Any]   = field(default_factory=dict)
-    smc:            Dict[str, Any]   = field(default_factory=dict)
-    quality:        str = "B"
-    skip_reason:    str = ""
-    # v10.1 extras (for Telegram alerts)
-    mtf_label:      str = ""
-    vpoc_label:     str = ""
-    funding_label:  str = ""
 
 
 # ─── Indicator helpers ────────────────────────────────────────────────────────
@@ -219,7 +188,9 @@ def _atr(highs, lows, closes, period=14):
     n = len(closes)
     if n < 2:
         return 0.0
-    trs = [max(highs[i]-lows[i], abs(highs[i]-closes[i-1]), abs(lows[i]-closes[i-1]))
+    trs = [max(highs[i] - lows[i],
+               abs(highs[i] - closes[i-1]),
+               abs(lows[i] - closes[i-1]))
            for i in range(1, n)]
     trs = np.array(trs)
     if len(trs) < period:
@@ -230,30 +201,63 @@ def _atr(highs, lows, closes, period=14):
     return atr
 
 
+# ─── Signal Result ────────────────────────────────────────────────────────────
+
+@dataclass
+class SignalResult:
+    symbol:         str
+    direction:      str
+    timeframe:      str
+    entry:          float
+    stop_loss:      float
+    take_profit:    float
+    rr_ratio:       float
+    rsi:            float
+    ema_fast:       float
+    ema_slow:       float
+    volume_ratio:   float
+    filters_passed: int
+    filters_total:  int
+    filter_detail:  Dict[str, bool] = field(default_factory=dict)
+    sizing:         Dict[str, Any]  = field(default_factory=dict)
+    smc:            Dict[str, Any]  = field(default_factory=dict)
+    quality:        str = "B"
+    skip_reason:    str = ""
+    # v10.1
+    mtf_label:      str = ""
+    vpoc_label:     str = ""
+    funding_label:  str = ""
+    # v10.2
+    regime:         str = ""
+    regime_label:   str = ""
+
+
 # ─── Main signal generator ───────────────────────────────────────────────────
 
 def generate_signal(
-    symbol:           str,
-    ohlcv:            List[List[float]],
-    orderbook:        Dict[str, Any],
-    btc_ohlcv:        List[List[float]],
-    account_size_usd: float = None,
-    # v10.1 new inputs
+    symbol:            str,
+    ohlcv:             List[List[float]],
+    orderbook:         Dict[str, Any],
+    btc_ohlcv:         List[List[float]],
+    account_size_usd:  float = None,
+    # v10.1
     ohlcv_1h:          Optional[List[List[float]]] = None,
     funding_long_ok:   Optional[bool]               = None,
     funding_short_ok:  Optional[bool]               = None,
     funding_long_lbl:  str                          = "",
     funding_short_lbl: str                          = "",
+    # v10.2
+    btc_funding_rate:  float                        = 0.0,
+    btc_ohlcv_1h:      Optional[List[List[float]]] = None,
 ) -> Optional[SignalResult]:
     """
-    Full signal pipeline:
-    1. Core rules       (RSI + EMA + Volume)
-    2. RR check         (min 1.5:1)
-    3. SMC layer        (Market Structure + OB + FVG + PD Zone)
-    4. Smart Filters v2 (9 context filters: original 6 + MTF + Funding + VPOC)
-    5. Position sizing
-
-    Returns SignalResult or None.
+    Adaptive signal pipeline:
+    1. Regime detection  (TRENDING / RANGING / EXTREME_FEAR)
+    2. Core rules        (RSI + EMA + Volume — thresholds from regime)
+    3. RR check
+    4. SMC layer
+    5. Smart Filters v2  (9 filters)
+    6. Position sizing   (scaled by regime size_multiplier)
     """
     if account_size_usd is None:
         account_size_usd = config.ACCOUNT_SIZE_USD
@@ -264,6 +268,14 @@ def generate_signal(
                     symbol, len(ohlcv) if ohlcv else 0, min_candles)
         return None
 
+    # ── Regime Detection (BTC 1h preferred, fallback to 15m) ─────────────────
+    regime_ohlcv = btc_ohlcv_1h if btc_ohlcv_1h else btc_ohlcv
+    regime_name, regime_params, regime_debug = detect_regime(
+        btc_ohlcv    = regime_ohlcv,
+        funding_rate = btc_funding_rate,
+    )
+    regime_lbl = regime_label(regime_name, regime_params)
+
     timeframe = select_timeframe(ohlcv)
 
     arr     = np.array(ohlcv, dtype=float)
@@ -273,7 +285,7 @@ def generate_signal(
     closes  = arr[:, 4]
     volumes = arr[:, 5]
 
-    # ── Indicators ──────────────────────────────────────────────────────────
+    # ── Indicators ───────────────────────────────────────────────────────────
     rsi      = _rsi(closes, config.RSI_PERIOD)
     ema_fast = _ema(closes, config.EMA_FAST)
     ema_slow = _ema(closes, config.EMA_SLOW)
@@ -285,32 +297,39 @@ def generate_signal(
     vol_ratio  = last_vol / avg_volume if avg_volume > 0 else 0.0
     entry      = float(closes[-1])
 
-    # ── CORE RULES ──────────────────────────────────────────────────────────
-    long_core  = rsi < config.RSI_OVERSOLD   and ema_fast > ema_slow and vol_ratio >= config.VOLUME_MULTIPLIER
-    short_core = rsi > config.RSI_OVERBOUGHT and ema_fast < ema_slow and vol_ratio >= config.VOLUME_MULTIPLIER
+    # ── CORE RULES — thresholds from regime ──────────────────────────────────
+    rsi_ob  = regime_params.rsi_oversold
+    rsi_os  = regime_params.rsi_overbought
+    vol_min = regime_params.volume_multiplier
+
+    long_core  = rsi < rsi_ob  and ema_fast > ema_slow and vol_ratio >= vol_min
+    short_core = rsi > rsi_os  and ema_fast < ema_slow and vol_ratio >= vol_min
 
     if not long_core and not short_core:
         logger.info(
-            "⏭ SKIP %s [%s] — Core rules failed | "
+            "⏭ SKIP %s [%s] [%s] — Core rules failed | "
             "RSI=%.1f (need <%.0f/>%.0f) | "
             "EMA9=%.2f %s EMA21=%.2f | "
             "VolRatio=%.2f (need >%.1f)",
-            symbol, timeframe,
-            rsi, config.RSI_OVERSOLD, config.RSI_OVERBOUGHT,
+            symbol, timeframe, regime_name,
+            rsi, rsi_ob, rsi_os,
             ema_fast, ">" if ema_fast > ema_slow else "<", ema_slow,
-            vol_ratio, config.VOLUME_MULTIPLIER,
+            vol_ratio, vol_min,
         )
         return None
 
     direction = "LONG" if long_core else "SHORT"
 
-    # ── SL / TP ──────────────────────────────────────────────────────────────
+    # ── SL / TP — multipliers from regime ────────────────────────────────────
+    sl_mult = regime_params.atr_sl_mult
+    tp_mult = regime_params.atr_tp_mult
+
     if direction == "LONG":
-        stop_loss   = entry - atr * config.ATR_SL_MULT
-        take_profit = entry + atr * config.ATR_TP_MULT
+        stop_loss   = entry - atr * sl_mult
+        take_profit = entry + atr * tp_mult
     else:
-        stop_loss   = entry + atr * config.ATR_SL_MULT
-        take_profit = entry - atr * config.ATR_TP_MULT
+        stop_loss   = entry + atr * sl_mult
+        take_profit = entry - atr * tp_mult
 
     sl_dist  = abs(entry - stop_loss)
     tp_dist  = abs(entry - take_profit)
@@ -318,12 +337,16 @@ def generate_signal(
 
     if rr_ratio < config.MIN_RR_RATIO:
         logger.info(
-            "⏭ SKIP %s [%s] %s — RR too low %.2f (need ≥%.1f) | ATR=%.4f",
-            symbol, timeframe, direction, rr_ratio, config.MIN_RR_RATIO, atr,
+            "⏭ SKIP %s [%s] %s [%s] — RR too low %.2f | ATR=%.4f",
+            symbol, timeframe, direction, regime_name, rr_ratio, atr,
         )
         return None
 
-    # ── SMC Layer ────────────────────────────────────────────────────────────
+    # ── Direction-specific funding ────────────────────────────────────────────
+    funding_ok  = funding_long_ok  if direction == "LONG" else funding_short_ok
+    funding_lbl = funding_long_lbl if direction == "LONG" else funding_short_lbl
+
+    # ── SMC ───────────────────────────────────────────────────────────────────
     smc = _smc_confluence(direction, entry, opens, closes, highs, lows)
     logger.info(
         "📐 SMC %s [%s] %s | Structure=%s Discount=%s OB=%s FVG=%s Score=%d/4",
@@ -332,19 +355,15 @@ def generate_signal(
         smc["smc_score"],
     )
 
-    # ── Direction-specific funding ────────────────────────────────────────────
-    funding_ok  = funding_long_ok  if direction == "LONG" else funding_short_ok
-    funding_lbl = funding_long_lbl if direction == "LONG" else funding_short_lbl
+    # ── VPOC ──────────────────────────────────────────────────────────────────
+    profile    = build_volume_profile(ohlcv)
+    vpoc_ok, _ = vpoc_confirms(direction, entry, profile)
+    vpoc_lbl   = vpoc_label(profile, entry)
 
-    # ── VPOC / Volume Profile ─────────────────────────────────────────────────
-    profile       = build_volume_profile(ohlcv)
-    vpoc_ok, _    = vpoc_confirms(direction, entry, profile)
-    vpoc_lbl      = vpoc_label(profile, entry)
-
-    # ── MTF label ────────────────────────────────────────────────────────────
+    # ── MTF ───────────────────────────────────────────────────────────────────
     mtf_lbl = mtf_bias_label(ohlcv_1h or [])
 
-    # ── Smart Filters (9 filters) ─────────────────────────────────────────────
+    # ── Smart Filters (9, min from regime) ────────────────────────────────────
     passed, filter_detail = all_filters_pass(
         direction    = direction,
         entry_price  = entry,
@@ -355,6 +374,7 @@ def generate_signal(
         ohlcv_1h     = ohlcv_1h,
         funding_ok   = funding_ok,
         vpoc_ok      = vpoc_ok,
+        min_pass     = regime_params.min_filters_pass,
     )
 
     filters_passed = sum(1 for v in filter_detail.values() if v)
@@ -364,21 +384,20 @@ def generate_signal(
         f"{k}={'✓' if v else '✗'}" for k, v in filter_detail.items()
     )
     logger.info(
-        "🔍 FILTERS %s [%s] %s — %d/%d passed | %s",
-        symbol, timeframe, direction,
+        "🔍 FILTERS %s [%s] %s [%s] — %d/%d passed | %s",
+        symbol, timeframe, direction, regime_name,
         filters_passed, filters_total, filter_str,
     )
 
     if not passed:
         logger.info(
-            "⏭ SKIP %s [%s] %s — Only %d/%d filters passed (need %d)",
-            symbol, timeframe, direction,
-            filters_passed, filters_total, config.MIN_FILTERS_PASS,
+            "⏭ SKIP %s [%s] %s [%s] — %d/%d filters (need %d)",
+            symbol, timeframe, direction, regime_name,
+            filters_passed, filters_total, regime_params.min_filters_pass,
         )
         return None
 
     # ── Quality Grade ─────────────────────────────────────────────────────────
-    # 9 filters + 4 SMC = 13 max; thresholds adjusted for v10.1
     total_score = filters_passed + smc["smc_score"]
     if total_score >= 11:
         quality = "A+"
@@ -389,18 +408,19 @@ def generate_signal(
     else:
         quality = "C"
 
-    # ── Position Sizing ───────────────────────────────────────────────────────
-    sizing = calculate_position_size(account_size_usd, entry, stop_loss, ohlcv)
+    # ── Position Sizing (regime size_multiplier applied) ──────────────────────
+    adjusted_account = account_size_usd * regime_params.size_multiplier
+    sizing = calculate_position_size(adjusted_account, entry, stop_loss, ohlcv)
 
     logger.info(
-        "✅ SIGNAL %s [%s] %s | Entry=%.4f SL=%.4f TP=%.4f | "
-        "RR=%.2f | RSI=%.1f | Vol=%.2f× | "
-        "SMC=%d/4 | Filters=%d/%d | Grade=%s | MTF=%s | %s | Funding=%s",
-        symbol, timeframe, direction,
+        "✅ SIGNAL %s [%s] %s [%s] | Entry=%.4f SL=%.4f TP=%.4f | "
+        "RR=%.2f | RSI=%.1f | Vol=%.2f× | SMC=%d/4 | "
+        "Filters=%d/%d | Grade=%s | Size=%.0f%%",
+        symbol, timeframe, direction, regime_name,
         entry, stop_loss, take_profit,
-        rr_ratio, rsi, vol_ratio,
-        smc["smc_score"], filters_passed, filters_total, quality,
-        mtf_lbl, vpoc_lbl, funding_lbl or "N/A",
+        rr_ratio, rsi, vol_ratio, smc["smc_score"],
+        filters_passed, filters_total, quality,
+        regime_params.size_multiplier * 100,
     )
 
     return SignalResult(
@@ -423,5 +443,7 @@ def generate_signal(
         quality        = quality,
         mtf_label      = mtf_lbl,
         vpoc_label     = vpoc_lbl,
-        funding_label  = funding_label,
+        funding_label  = funding_lbl,
+        regime         = regime_name,
+        regime_label   = regime_lbl,
     )
