@@ -51,7 +51,7 @@ TIMEFRAMES = ["5m", "15m", "1h"]
 DEFAULT_TF = "15m"
 
 # ─── Smart Filters ──────────────────────────────────────────────────────────
-MIN_FILTERS_PASS = 4        # At least 4 out of 6 context filters must pass
+MIN_FILTERS_PASS = 5        # At least 4 out of 6 context filters must pass
 ORDERBOOK_DEPTH  = 20       # Levels to fetch for bid/ask pressure
 
 # ─── Risk Management ────────────────────────────────────────────────────────
