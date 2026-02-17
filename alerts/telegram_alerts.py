@@ -1,6 +1,6 @@
 """
-Telegram Alerts — ARUNABHA SMART v10.0
-Rich signal formatting with SMC details.
+Telegram Alerts — ARUNABHA SMART v10.1
+Rich signal formatting with SMC + MTF + Funding + VPOC details.
 """
 
 import logging
@@ -25,16 +25,22 @@ def _esc(text: str) -> str:
 
 
 def _filter_row(detail: Dict[str, bool]) -> str:
+    """Icon badges for all 9 filters."""
     icons = {
+        # Original 6
         "session":     "🕐",
         "orderflow":   "📊",
         "liquidation": "💥",
         "btc_trend":   "₿",
         "correlation": "🔗",
         "volatility":  "📈",
+        # New v10.1
+        "mtf_1h":      "⏱",
+        "funding":     "💸",
+        "vpoc":        "📦",
     }
     return "  ".join(
-        f"{icons.get(k,'•')}{'✅' if v else '❌'}"
+        f"{icons.get(k, '•')}{'✅' if v else '❌'}"
         for k, v in detail.items()
     )
 
@@ -50,13 +56,13 @@ def _smc_row(smc: Dict[str, Any]) -> str:
 
 
 def format_signal_message(signal: SignalResult) -> str:
-    """Telegram MarkdownV2 signal card."""
+    """Telegram MarkdownV2 signal card — v10.1."""
     dir_emoji = "🟢 LONG" if signal.direction == "LONG" else "🔴 SHORT"
     grade_map = {"A+": "⭐⭐⭐ A\\+", "A": "⭐⭐ A", "B": "⭐ B", "C": "C"}
     grade_str = grade_map.get(signal.quality, signal.quality)
 
-    smc       = signal.smc or {}
-    sizing    = signal.sizing or {}
+    smc    = signal.smc    or {}
+    sizing = signal.sizing or {}
 
     # SMC details
     smc_score = smc.get("smc_score", 0)
@@ -67,39 +73,44 @@ def format_signal_message(signal: SignalResult) -> str:
     swing_hi  = smc.get("swing_high", 0)
     swing_lo  = smc.get("swing_low", 0)
 
-    ob_str  = f"{ob[0]:.4f} — {ob[1]:.4f}" if ob  else "Not found"
+    ob_str  = f"{ob[0]:.4f} — {ob[1]:.4f}"   if ob  else "Not found"
     fvg_str = f"{fvg[0]:.4f} — {fvg[1]:.4f}" if fvg else "Not found"
 
     # Risk line
     risk_str = ""
     if sizing:
         risk_str = (
-            f"💼 Risk: {sizing.get('risk_pct',0):.1f}%"
-            f"  \\(${sizing.get('risk_usd',0):.0f}\\)"
-            f"  \\|  Position: ${sizing.get('position_usd',0):.0f}"
-            f"  \\|  {sizing.get('contracts',0):.4f} contracts"
+            f"💼 Risk: {sizing.get('risk_pct', 0):.1f}%"
+            f"  \\(${sizing.get('risk_usd', 0):.0f}\\)"
+            f"  \\|  Position: ${sizing.get('position_usd', 0):.0f}"
+            f"  \\|  {sizing.get('contracts', 0):.4f} contracts"
         )
 
     filter_badges = _filter_row(signal.filter_detail)
 
+    # v10.1 extra context lines (only show if data present)
+    mtf_line     = f"│ {_esc(signal.mtf_label)}\n"     if getattr(signal, "mtf_label",     "") else ""
+    vpoc_line    = f"│ {_esc(signal.vpoc_label)}\n"    if getattr(signal, "vpoc_label",    "") else ""
+    funding_line = f"│ {_esc(signal.funding_label)}\n" if getattr(signal, "funding_label", "") else ""
+
     msg = (
-        f"⚡ *ARUNABHA SMART v10\\.0*\n"
+        f"⚡ *ARUNABHA SMART v10\\.1*\n"
         f"\n"
         f"{dir_emoji}  `{_esc(signal.symbol)}`  \\[{signal.timeframe}\\]  {grade_str}\n"
         f"\n"
-        f"┌─ *ENTRY PLAN* ──────────────────\n"
+        f"┌─ *ENTRY PLAN* ───────────────────\n"
         f"│ 📍 Entry      `{signal.entry:.4f}`\n"
         f"│ 🛑 Stop Loss  `{signal.stop_loss:.4f}`\n"
         f"│ 🎯 TP         `{signal.take_profit:.4f}`\n"
         f"│ 📐 R:R        `{signal.rr_ratio:.2f} : 1`\n"
         f"└──────────────────────────────────\n"
         f"\n"
-        f"┌─ *TECHNICALS* ──────────────────\n"
+        f"┌─ *TECHNICALS* ───────────────────\n"
         f"│ RSI `{signal.rsi:.1f}`  EMA9 `{signal.ema_fast:.2f}`  EMA21 `{signal.ema_slow:.2f}`\n"
         f"│ Volume `{signal.volume_ratio:.2f}×` avg\n"
         f"└──────────────────────────────────\n"
         f"\n"
-        f"┌─ *SMART MONEY* \\({smc_score}/4\\) ────────\n"
+        f"┌─ *SMART MONEY* \\({smc_score}/4\\) ─────────\n"
         f"│ Structure `{_esc(structure)}`\n"
         f"│ Swing   Hi `{swing_hi:.4f}`  Lo `{swing_lo:.4f}`\n"
         f"│ Equilib   `{equil:.4f}`\n"
@@ -107,7 +118,13 @@ def format_signal_message(signal: SignalResult) -> str:
         f"│ FVG Zone    `{_esc(fvg_str)}`\n"
         f"└──────────────────────────────────\n"
         f"\n"
-        f"┌─ *CONTEXT FILTERS* \\({signal.filters_passed}/{signal.filters_total}\\) ─\n"
+        f"┌─ *v10\\.1 CONFLUENCE* ────────────\n"
+        f"{mtf_line}"
+        f"{vpoc_line}"
+        f"{funding_line}"
+        f"└──────────────────────────────────\n"
+        f"\n"
+        f"┌─ *CONTEXT FILTERS* \\({signal.filters_passed}/{signal.filters_total}\\) ──\n"
         f"│ {filter_badges}\n"
         f"└──────────────────────────────────\n"
         f"\n"
@@ -125,12 +142,14 @@ def format_status_message(stats: Dict[str, Any]) -> str:
     shorts = stats.get("shorts", 0)
     date   = _esc(stats.get("date", "—"))
     return (
-        f"⚡ *ARUNABHA SMART v10\\.0 — Status*\n\n"
+        f"⚡ *ARUNABHA SMART v10\\.1 — Status*\n\n"
         f"📅 Date: `{date}`\n"
         f"📡 Signals: `{total}/{config.MAX_SIGNALS_DAY}`\n"
         f"🟢 Longs: `{longs}`    🔴 Shorts: `{shorts}`\n"
-        f"🔁 Concurrent: `{stats.get('concurrent',0)}/{config.MAX_CONCURRENT}`\n\n"
+        f"🔁 Concurrent: `{stats.get('concurrent', 0)}/{config.MAX_CONCURRENT}`\n\n"
         f"🤖 Bot running ✅\n"
+        f"🔌 WebSocket: live ✅\n"
+        f"📊 MTF \\+ Funding \\+ VPOC: ON ✅\n"
         f"📋 Pairs: `{_esc(', '.join(config.TRADING_PAIRS))}`"
     )
 
@@ -138,7 +157,7 @@ def format_status_message(stats: Dict[str, Any]) -> str:
 def format_signals_list(signals: List[Dict[str, Any]]) -> str:
     if not signals:
         return "⚡ *ARUNABHA SMART* — Aaj kono signal generate hoyni\\."
-    lines = ["⚡ *ARUNABHA SMART v10\\.0 — Today's Signals*\n"]
+    lines = ["⚡ *ARUNABHA SMART v10\\.1 — Today's Signals*\n"]
     for i, s in enumerate(signals, 1):
         d   = "🟢" if s.get("direction") == "LONG" else "🔴"
         sym = _esc(s.get("symbol", "?"))
@@ -162,18 +181,20 @@ class TelegramAlerts:
                 text       = format_signal_message(signal),
                 parse_mode = ParseMode.MARKDOWN_V2,
             )
-            logger.info("Alert sent: %s %s", signal.symbol, signal.direction)
+            logger.info("Alert sent: %s %s [%s]", signal.symbol, signal.direction, signal.quality)
         except Exception as exc:
-            # Fallback: plain text
             logger.error("MarkdownV2 send failed (%s) — trying plain text", exc)
             try:
                 plain = (
-                    f"ARUNABHA SMART v10.0\n"
+                    f"ARUNABHA SMART v10.1\n"
                     f"{signal.direction} {signal.symbol} [{signal.timeframe}] Grade={signal.quality}\n"
                     f"Entry: {signal.entry}  SL: {signal.stop_loss}  TP: {signal.take_profit}\n"
                     f"R:R={signal.rr_ratio}  RSI={signal.rsi}  Vol={signal.volume_ratio}x\n"
-                    f"SMC Score: {signal.smc.get('smc_score',0)}/4  "
+                    f"SMC Score: {signal.smc.get('smc_score', 0)}/4  "
                     f"Filters: {signal.filters_passed}/{signal.filters_total}\n"
+                    f"{getattr(signal, 'mtf_label', '')}  "
+                    f"{getattr(signal, 'vpoc_label', '')}  "
+                    f"{getattr(signal, 'funding_label', '')}\n"
                     f"MANUAL EXECUTION REQUIRED"
                 )
                 await self._bot.send_message(chat_id=config.TELEGRAM_CHAT_ID, text=plain)
@@ -188,11 +209,13 @@ class TelegramAlerts:
 
     async def send_startup(self) -> None:
         await self.send_text(
-            f"⚡ ARUNABHA SMART v10.0 started!\n"
+            f"⚡ ARUNABHA SMART v10.1 started!\n"
             f"Exchange: {config.PRIMARY_EXCHANGE.upper()}\n"
             f"Pairs: {', '.join(config.TRADING_PAIRS)}\n"
-            f"Scan: every {config.SCAN_INTERVAL_SEC}s | Max: {config.MAX_SIGNALS_DAY}/day\n"
-            f"SMC layer: ON | Anti-overfitting: ON\n"
+            f"Mode: WebSocket (no polling) 🔌\n"
+            f"Filters: MTF ✓ | Funding Rate ✓ | VPOC ✓\n"
+            f"SMC: ON | Anti-overfitting: ON\n"
+            f"Max signals: {config.MAX_SIGNALS_DAY}/day\n"
             f"Ready! 🚀"
         )
 
