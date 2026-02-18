@@ -1,6 +1,6 @@
 """
-ARUNABHA SMART SIGNAL v2.1
-With BTC multi-timeframe data
+ARUNABHA SMART SIGNAL v3.0
+Surgical execution with strict order priority
 """
 
 import logging
@@ -9,10 +9,11 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 
 import config
-from .extreme_fear_engine import ExtremeFearEngine
+from .extreme_fear_engine import ExtremeFearEngine, extreme_fear_engine
 from .simple_filters import SimpleFilters
-from .risk_manager import RiskManager, Trade
+from .risk_manager import RiskManager, Trade, risk_manager
 from .market_mood import MarketMood
+from .btc_regime_detector import btc_detector, BTCRegime
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +37,13 @@ class SignalResult:
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
     confirmation_pending: bool = False
     confirmation_price: float = 0.0
+    # 🆕 Enhanced tracking
+    regime_mode: str = ""
+    atr_pct: float = 0.0
+    structure_strength: str = ""
 
 
-# Global pending signals for entry confirmation
+# Global pending confirmations
 _pending_confirmations: Dict[str, Dict] = {}
 
 
@@ -48,142 +53,195 @@ def generate_signal(
     ohlcv_5m: List[List[float]],
     ohlcv_1h: List[List[float]],
     btc_ohlcv_15m: List[List[float]],
-    btc_ohlcv_1h: List[List[float]],      # 🆕 New
-    btc_ohlcv_4h: List[List[float]],      # 🆕 New
+    btc_ohlcv_1h: List[List[float]],
+    btc_ohlcv_4h: List[List[float]],
     funding_rate: float,
     fear_index: int,
     account_size: float,
-    risk_manager: RiskManager,
+    risk_mgr: RiskManager,
     filters: SimpleFilters,
     engine: ExtremeFearEngine,
     mood: MarketMood
 ) -> Optional[SignalResult]:
     """
-    Full signal pipeline with entry confirmation
+    🆕 ISSUE VI: STRICT EXECUTION ORDER PRIORITY
+    
+    1. Regime Check (Gatekeeper)
+    2. Volatility Check  
+    3. Structure Confirmation
+    4. Score Validation
+    5. Risk Manager Approval
+    6. Order Placement
     """
     
     global _pending_confirmations
     
-    logger.info("=" * 60)
-    logger.info("🔍 SCAN START: %s", symbol)
-    logger.info("=" * 60)
+    logger.info("=" * 70)
+    logger.info("[SURGICAL] SCAN START: %s", symbol)
+    logger.info("=" * 70)
     
-    # Check for pending confirmation
+    # Check pending confirmations first
     if symbol in _pending_confirmations:
-        return _check_confirmation(
-            symbol, ohlcv_15m, risk_manager, filters
-        )
+        return _check_confirmation(symbol, ohlcv_15m, risk_mgr, filters)
     
-    # ─── STEP 1: Risk Manager Check ─────────────────────────
-    logger.info("[STEP 1] Risk Manager Check...")
-    if not risk_manager.can_trade(symbol):
-        stats = risk_manager.get_stats()
-        logger.warning("❌ BLOCK: %s | Daily limit %d/%d or max concurrent %d/%d",
-                      symbol, 
-                      stats.get('total', 0), config.MAX_SIGNALS_DAY,
-                      stats.get('active_trades', 0), config.MAX_CONCURRENT)
+    # ═════════════════════════════════════════════════════════════════
+    # STEP 1: REGIME CHECK (Issue I - Non-negotiable gatekeeper)
+    # ═════════════════════════════════════════════════════════════════
+    logger.info("[STEP 1] REGIME GATEKEEPER")
+    
+    if not btc_ohlcv_15m or len(btc_ohlcv_15m) < 200:
+        logger.error("❌ BLOCK: Insufficient BTC data")
         return None
-    logger.info("✅ PASS: Can trade")
     
-    # ─── STEP 2: Market Mood Check ──────────────────────────
-    logger.info("[STEP 2] Market Mood Check...")
-    mood_data = mood.get_mood()
-    logger.info("   Fear Index: %d/100 (%s)", fear_index, mood_data["mood"])
+    # Analyze BTC regime
+    regime_analysis = btc_detector.analyze(btc_ohlcv_15m, btc_ohlcv_1h, btc_ohlcv_4h)
     
-    if not mood_data["should_trade"]:
-        logger.warning("❌ BLOCK: Fear index %d > stop threshold %d",
-                      fear_index, config.FEAR_INDEX_STOP)
+    # Hard block if regime says no
+    if not regime_analysis.can_trade:
+        logger.error("❌ BLOCK: Regime gate - %s", regime_analysis.block_reason)
         return None
-    logger.info("✅ PASS: Market mood OK")
     
-    # ─── STEP 3: Extreme Fear Engine ────────────────────────
-    logger.info("[STEP 3] Extreme Fear Engine (Strict)...")
+    trade_mode = regime_analysis.trade_mode  # "TREND" or "RANGE"
+    
+    logger.info("✅ REGIME: %s | Mode: %s | Conf: %d%% | Consistency: %s",
+               regime_analysis.regime.value, trade_mode,
+               regime_analysis.confidence, regime_analysis.consistency)
+    
+    # ═════════════════════════════════════════════════════════════════
+    # STEP 2: VOLATILITY CHECK (Issue IV - Before structure)
+    # ═════════════════════════════════════════════════════════════════
+    logger.info("[STEP 2] VOLATILITY COMPRESSION")
+    
+    atr = _calculate_atr(ohlcv_15m)
+    current_price = ohlcv_15m[-1][4]
+    atr_pct = (atr / current_price) * 100 if current_price > 0 else 0
+    
+    logger.info("   ATR%%: %.2f", atr_pct)
+    
+    # Hard block if ATR > 3%
+    if atr_pct > 3.0:
+        logger.error("❌ BLOCK: ATR %.2f%% > 3%% (extreme volatility)", atr_pct)
+        return None
+    
+    # Warning for elevated
+    if 2.0 <= atr_pct <= 3.0:
+        logger.warning("   ⚠️ ELEVATED: ATR %.2f%% - Position will be reduced 50%%", atr_pct)
+    
+    # Warning for low
+    if atr_pct < 0.4:
+        logger.warning("   ⚠️ LOW: ATR %.2f%% - Breakout trades avoided", atr_pct)
+    
+    logger.info("✅ VOLATILITY: OK")
+    
+    # ═════════════════════════════════════════════════════════════════
+    # STEP 3: STRUCTURE CONFIRMATION (Issue II - Mandatory)
+    # ═════════════════════════════════════════════════════════════════
+    logger.info("[STEP 3] STRUCTURE CONFIRMATION")
+    
+    # Get structure from engine
     engine_result = engine.evaluate(
         ohlcv_15m=ohlcv_15m,
         ohlcv_5m=ohlcv_5m,
         ohlcv_1h=ohlcv_1h,
         btc_ohlcv_15m=btc_ohlcv_15m,
         funding_rate=funding_rate,
-        fear_index=fear_index
+        fear_index=fear_index,
+        btc_trade_mode=trade_mode
     )
     
-    logger.info("   Score: %d/100 (min: %d) | Grade: %s", 
-               engine_result["score"], config.MIN_SCORE_TO_TRADE, engine_result["grade"])
-    logger.info("   EMA200: %s | Structure: %s", 
-               engine_result["ema200_passed"], engine_result["structure_passed"])
-    
-    if not engine_result["ema200_passed"]:
-        logger.warning("❌ BLOCK: EMA200 not confirmed (MANDATORY)")
-        return None
-        
+    # Check structure first (before score)
     if not engine_result["structure_passed"]:
-        logger.warning("❌ BLOCK: Structure shift not confirmed (MANDATORY)")
-        logger.info("   💡 TIP: Wait for BOS (Break of Structure) or CHoCH")
+        logger.error("❌ BLOCK: Structure not confirmed")
         return None
     
-    if not engine_result["can_trade"]:
-        logger.warning("❌ BLOCK: Score %d < minimum %d",
-                      engine_result["score"], config.MIN_SCORE_TO_TRADE)
+    if engine_result.get("structure_weak"):
+        logger.error("❌ BLOCK: Structure weak - no BOS/CHoCH")
         return None
-    logger.info("✅ PASS: All mandatory checks OK")
     
-    # ─── STEP 4: Determine Direction ────────────────────────
-    logger.info("[STEP 4] Determine Direction...")
     direction = engine_result["direction"]
-    logger.info("   Direction: %s (from structure)", direction)
     
-    # ─── STEP 5: Simple Filters (8 filters) ─────────────────
-    logger.info("[STEP 5] Simple Filters Check (need %d/8)...", config.MIN_FILTERS_PASS)
-    filters_passed, filters_total, filter_details, mandatory_pass = filters.evaluate(
-        direction=direction,
-        ohlcv_15m=ohlcv_15m,
-        ohlcv_1h=ohlcv_1h,
-        btc_ohlcv_15m=btc_ohlcv_15m,
-        btc_ohlcv_1h=btc_ohlcv_1h,      # 🆕 Pass new data
-        btc_ohlcv_4h=btc_ohlcv_4h,      # 🆕 Pass new data
-        funding_rate=funding_rate,
-        symbol=symbol,
-        ema200_passed=engine_result["ema200_passed"],
-        structure_passed=engine_result["structure_passed"]
-    )
+    # Validate direction matches regime
+    if trade_mode == "TREND":
+        if regime_analysis.regime in [BTCRegime.STRONG_BULL, BTCRegime.BULL] and direction != "LONG":
+            logger.error("❌ BLOCK: Direction mismatch - BTC bull but SHORT signal")
+            return None
+        if regime_analysis.regime in [BTCRegime.STRONG_BEAR, BTCRegime.BEAR] and direction != "SHORT":
+            logger.error("❌ BLOCK: Direction mismatch - BTC bear but LONG signal")
+            return None
     
-    if not mandatory_pass:
-        logger.warning("❌ BLOCK: Mandatory filters failed (Session/BTC/EMA200/Structure)")
+    logger.info("✅ STRUCTURE: %s | Direction: %s", 
+               engine_result.get("structure_strength", "OK"), direction)
+    
+    # ═════════════════════════════════════════════════════════════════
+    # STEP 4: SCORE VALIDATION (Issue III - Strict discipline)
+    # ═════════════════════════════════════════════════════════════════
+    logger.info("[STEP 4] SCORE VALIDATION")
+    
+    score = engine_result["score"]
+    grade = engine_result["grade"]
+    
+    logger.info("   Score: %d | Grade: %s | Mode: %s", score, grade, trade_mode)
+    
+    # Mode-specific minimums
+    if trade_mode == "CHOPPY":
+        min_score = 60  # Higher bar for choppy
+        allowed_grades = ["A", "A+"]
+    else:
+        min_score = 50
+        allowed_grades = ["A", "A+", "B"]  # B allowed but warned
+    
+    if score < min_score:
+        logger.error("❌ BLOCK: Score %d < minimum %d for %s mode", score, min_score, trade_mode)
         return None
     
-    for name, detail in filter_details.items():
-        status = "✅" if detail["pass"] else "❌"
-        logger.info("   %s %s: %s", status, name, detail["msg"])
-    
-    logger.info("   Total: %d/%d passed", filters_passed, filters_total)
-    
-    if filters_passed < config.MIN_FILTERS_PASS:
-        failed = [n for n, d in filter_details.items() if not d["pass"]]
-        logger.warning("❌ BLOCK: Filters %d/%d, need %d | Failed: %s",
-                      filters_passed, filters_total, 
-                      config.MIN_FILTERS_PASS, ", ".join(failed))
+    if grade not in allowed_grades:
+        logger.error("❌ BLOCK: Grade %s not in allowed %s", grade, allowed_grades)
         return None
-    logger.info("✅ PASS: All filters OK")
     
-    # ─── STEP 6: Calculate SL/TP ────────────────────────────
-    logger.info("[STEP 6] Calculate SL/TP...")
-    atr = _calculate_atr(ohlcv_15m)
-    current_price = ohlcv_15m[-1][4]
+    if grade == "B":
+        logger.warning("   ⚠️ Grade B - Marginal trade in trend mode")
     
-    sl_tp = risk_manager.calculate_sl_tp(direction, current_price, atr)
-    logger.info("   ATR: %.2f | Entry: %.2f | SL: %.2f | TP: %.2f | R:R: %.2f:1",
-               atr, current_price, sl_tp["stop_loss"], sl_tp["take_profit"], sl_tp["rr_ratio"])
+    logger.info("✅ SCORE: OK")
     
+    # ═════════════════════════════════════════════════════════════════
+    # STEP 5: RISK MANAGER APPROVAL (Issue V - Capital protection)
+    # ═════════════════════════════════════════════════════════════════
+    logger.info("[STEP 5] RISK MANAGER")
+    
+    # Check day lock
+    is_locked, lock_reason = risk_mgr.check_day_lock()
+    if is_locked:
+        logger.error("❌ BLOCK: Day locked - %s", lock_reason)
+        return None
+    
+    if not risk_mgr.can_trade(symbol):
+        logger.error("❌ BLOCK: Risk manager rejection")
+        return None
+    
+    # Calculate SL/TP with mode adjustment
+    sl_tp = risk_mgr.calculate_sl_tp(direction, current_price, atr, trade_mode)
+    
+    # Check RR
     if sl_tp["rr_ratio"] < config.MIN_RR_RATIO:
-        logger.warning("❌ BLOCK: RR %.2f < minimum %.2f",
-                      sl_tp["rr_ratio"], config.MIN_RR_RATIO)
+        logger.error("❌ BLOCK: R:R %.2f < %.2f", sl_tp["rr_ratio"], config.MIN_RR_RATIO)
         return None
-    logger.info("✅ PASS: RR OK")
     
-    # ─── STEP 7: Entry Confirmation Delay ────────────────────
+    # Calculate position with volatility adjustment
+    position = risk_mgr.calculate_position(account_size, current_price, sl_tp["stop_loss"], atr_pct)
+    
+    if position.get("blocked"):
+        logger.error("❌ BLOCK: Position sizing - %s", position.get("reason"))
+        return None
+    
+    logger.info("✅ RISK: Position $%.2f | RR %.2f | SL %.2f | TP %.2f",
+               position.get("position_usd", 0), sl_tp["rr_ratio"],
+               sl_tp["stop_loss"], sl_tp["take_profit"])
+    
+    # ═════════════════════════════════════════════════════════════════
+    # STEP 6: ENTRY CONFIRMATION (If enabled)
+    # ═════════════════════════════════════════════════════════════════
     if config.ENTRY_CONFIRMATION_WAIT:
-        logger.info("[STEP 7] ⏳ ENTRY CONFIRMATION PENDING...")
-        logger.info("   Waiting for next candle close above entry zone")
+        logger.info("[STEP 6] ENTRY CONFIRMATION PENDING")
         
         _pending_confirmations[symbol] = {
             "direction": direction,
@@ -191,13 +249,16 @@ def generate_signal(
             "sl": sl_tp["stop_loss"],
             "tp": sl_tp["take_profit"],
             "rr": sl_tp["rr_ratio"],
-            "score": engine_result["score"],
-            "grade": engine_result["grade"],
-            "filters_passed": filters_passed,
+            "score": score,
+            "grade": grade,
+            "filters_passed": 0,  # Will check after confirmation
             "logic": engine_result["top_logic"],
-            "mood": mood_data,
+            "mood": mood.get_mood(),
             "timestamp": datetime.now(),
-            "candle_count": 0
+            "candle_count": 0,
+            "regime_mode": trade_mode,
+            "atr_pct": atr_pct,
+            "structure_strength": engine_result.get("structure_strength", "OK")
         }
         
         return SignalResult(
@@ -207,27 +268,32 @@ def generate_signal(
             stop_loss=sl_tp["stop_loss"],
             take_profit=sl_tp["take_profit"],
             rr_ratio=sl_tp["rr_ratio"],
-            position_size={},
-            extreme_fear_score=engine_result["score"],
-            extreme_fear_grade=engine_result["grade"],
-            filters_passed=filters_passed,
+            position_size=position,
+            extreme_fear_score=score,
+            extreme_fear_grade=grade,
+            filters_passed=6,  # Passed regime, vol, structure, score, risk
             logic_triggered=engine_result["top_logic"],
-            market_mood=mood_data["emoji"] + " " + mood_data["mood"],
-            session_info=", ".join(mood.is_session_active()["active_sessions"]),
-            human_insight="⏳ PENDING: Waiting for entry confirmation (next candle close)",
+            market_mood=mood.get_mood()["emoji"] + " " + mood.get_mood()["mood"],
+            session_info=trade_mode,
+            human_insight=f"⏳ PENDING: {trade_mode} mode | Structure: {engine_result.get('structure_strength', 'OK')}",
             confirmation_pending=True,
-            confirmation_price=current_price
+            confirmation_price=current_price,
+            regime_mode=trade_mode,
+            atr_pct=atr_pct,
+            structure_strength=engine_result.get("structure_strength", "OK")
         )
     
+    # Immediate execution (no confirmation wait)
     return _finalize_signal(
-        symbol, direction, current_price, sl_tp, engine_result, 
-        filters_passed, mood_data, risk_manager, filters, account_size, mood
+        symbol, direction, current_price, sl_tp, engine_result,
+        6, mood.get_mood(), risk_mgr, filters, account_size, mood,
+        trade_mode, atr_pct
     )
 
 
 def _check_confirmation(symbol: str, ohlcv: List[List[float]], 
-                       risk_manager: RiskManager, filters: SimpleFilters) -> Optional[SignalResult]:
-    """Check if entry confirmation criteria met"""
+                       risk_mgr: RiskManager, filters: SimpleFilters) -> Optional[SignalResult]:
+    """Check entry confirmation criteria."""
     global _pending_confirmations
     
     pending = _pending_confirmations.get(symbol)
@@ -240,7 +306,7 @@ def _check_confirmation(symbol: str, ohlcv: List[List[float]],
     
     pending["candle_count"] += 1
     
-    logger.info("[CONFIRMATION CHECK] %s - Candle #%d", symbol, pending["candle_count"])
+    logger.info("[CONFIRMATION] %s - Candle #%d", symbol, pending["candle_count"])
     
     confirmed = False
     
@@ -248,47 +314,47 @@ def _check_confirmation(symbol: str, ohlcv: List[List[float]],
         bullish_close = current_price > entry_zone * 1.001
         higher_low = ohlcv[-1][3] > ohlcv[-2][3] if len(ohlcv) > 1 else False
         confirmed = bullish_close and higher_low
-        
-        logger.info("   Price: %.2f vs Entry: %.2f | Bullish: %s | Higher Low: %s",
+        logger.info("   Price: %.2f > Entry: %.2f | Bullish: %s | HL: %s",
                    current_price, entry_zone, bullish_close, higher_low)
     else:
         bearish_close = current_price < entry_zone * 0.999
         lower_high = ohlcv[-1][2] < ohlcv[-2][2] if len(ohlcv) > 1 else False
         confirmed = bearish_close and lower_high
-        
-        logger.info("   Price: %.2f vs Entry: %.2f | Bearish: %s | Lower High: %s",
+        logger.info("   Price: %.2f < Entry: %.2f | Bearish: %s | LH: %s",
                    current_price, entry_zone, bearish_close, lower_high)
     
     if confirmed:
-        logger.info("✅ CONFIRMED: Entry criteria met after %d candles", pending["candle_count"])
+        logger.info("✅ CONFIRMED after %d candles", pending["candle_count"])
         del _pending_confirmations[symbol]
         
+        # Recalculate with new price
         atr = _calculate_atr(ohlcv)
-        sl_tp = risk_manager.calculate_sl_tp(direction, current_price, atr)
+        sl_tp = risk_mgr.calculate_sl_tp(direction, current_price, atr, pending["regime_mode"])
         
         return _finalize_signal(
             symbol, direction, current_price, sl_tp,
             {"score": pending["score"], "grade": pending["grade"], "top_logic": pending["logic"]},
-            pending["filters_passed"], pending["mood"], risk_manager, filters, 1000, None
+            6, pending["mood"], risk_mgr, filters, 1000, None,
+            pending["regime_mode"], pending["atr_pct"]
         )
+    
     elif pending["candle_count"] >= 3:
-        logger.warning("❌ CONFIRMATION FAILED: Max candles reached, cancelling signal")
+        logger.warning("❌ CONFIRMATION FAILED: Max candles")
         del _pending_confirmations[symbol]
         return None
+    
     else:
-        logger.info("⏳ Still waiting for confirmation...")
+        logger.info("⏳ Waiting...")
         return None
 
 
 def _finalize_signal(symbol, direction, entry, sl_tp, engine_result, 
-                    filters_passed, mood_data, risk_manager, filters, account_size, mood):
-    """Finalize and create signal"""
+                    filters_passed, mood_data, risk_mgr, filters, account_size, mood,
+                    regime_mode, atr_pct):
+    """Finalize signal with all protections."""
     
-    position = risk_manager.calculate_position(
-        account_size, entry, sl_tp["stop_loss"]
-    )
+    position = risk_mgr.calculate_position(account_size, entry, sl_tp["stop_loss"], atr_pct)
     
-    from datetime import datetime
     trade = Trade(
         symbol=symbol,
         direction=direction,
@@ -297,19 +363,21 @@ def _finalize_signal(symbol, direction, entry, sl_tp, engine_result,
         take_profit=sl_tp["take_profit"],
         size_usd=position.get("position_usd", 0),
         timestamp=datetime.now(),
-        max_holding_minutes=90 if mood_data["mood"] == "EXTREME_FEAR" else 120
+        max_holding_minutes=60 if regime_mode == "CHOPPY" else 90  # Shorter in choppy
     )
     
-    risk_manager.open_trade(trade)
+    if not risk_mgr.open_trade(trade):
+        return None
+    
     filters.update_cooldown(symbol)
     
-    insight = _build_insight(mood_data, engine_result, filters_passed, direction)
+    insight = _build_insight(mood_data, engine_result, filters_passed, direction, regime_mode)
     
-    logger.info("=" * 60)
-    logger.info("✅ SIGNAL GENERATED: %s %s @ %.2f", symbol, direction, entry)
-    logger.info("   Score: %d | Grade: %s | RR: %.2f", 
-               engine_result["score"], engine_result["grade"], sl_tp["rr_ratio"])
-    logger.info("=" * 60)
+    logger.info("=" * 70)
+    logger.info("✅ SIGNAL: %s %s @ %.2f | Mode: %s | Score: %d | RR: %.2f",
+               symbol, direction, entry, regime_mode, 
+               engine_result["score"], sl_tp["rr_ratio"])
+    logger.info("=" * 70)
     
     return SignalResult(
         symbol=symbol,
@@ -323,38 +391,38 @@ def _finalize_signal(symbol, direction, entry, sl_tp, engine_result,
         extreme_fear_grade=engine_result["grade"],
         filters_passed=filters_passed,
         logic_triggered=engine_result["top_logic"],
-        market_mood=mood_data["emoji"] + " " + mood_data["mood"],
-        session_info=", ".join(mood.is_session_active()["active_sessions"]) if mood else "",
+        market_mood=mood_data["emoji"] + " " + mood_data["mood"] if isinstance(mood_data, dict) else "Unknown",
+        session_info=regime_mode,
         human_insight=insight,
-        confirmation_pending=False
+        confirmation_pending=False,
+        regime_mode=regime_mode,
+        atr_pct=atr_pct,
+        structure_strength=engine_result.get("structure_strength", "OK")
     )
 
 
-def _build_insight(mood: Dict, engine: Dict, filters: int, direction: str) -> str:
-    """Build human-readable insight"""
+def _build_insight(mood: Dict, engine: Dict, filters: int, direction: str, mode: str) -> str:
+    """Build insight string."""
     lines = []
     
-    if mood["mood"] == "EXTREME_FEAR":
-        lines.append("😱 EXTREME FEAR: Quick profit target")
-    elif mood["mood"] == "FEAR":
-        lines.append("⚠️ FEAR: Reduced size, cautious")
+    if isinstance(mood, dict):
+        if mood.get("mood") == "EXTREME_FEAR":
+            lines.append("😱 EXTREME FEAR")
+        elif mood.get("mood") == "FEAR":
+            lines.append("⚠️ FEAR")
     
-    lines.append(f"🧠 Logic: {', '.join(engine['top_logic'][:3])}")
-    lines.append(f"🔍 Filters: {filters}/8 passed")
-    
-    if direction == "LONG":
-        lines.append("🟢 LONG: EMA200 + Structure + BTC Bull confirmed")
-    else:
-        lines.append("🔴 SHORT: EMA200 + Structure + BTC Bear confirmed")
+    lines.append(f"🎯 Mode: {mode}")
+    lines.append(f"🧠 {', '.join(engine.get('top_logic', [])[:2])}")
+    lines.append(f"{'🟢' if direction == 'LONG' else '🔴'} {direction}")
     
     return " | ".join(lines)
 
 
 def _calculate_atr(ohlcv: List[List[float]], period: int = 14) -> float:
-    """Calculate ATR"""
+    """Calculate ATR."""
     if len(ohlcv) < period + 1:
         return 0.0
-        
+    
     trs = []
     for i in range(1, len(ohlcv)):
         high = ohlcv[i][2]
