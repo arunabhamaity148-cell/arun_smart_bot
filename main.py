@@ -1,6 +1,6 @@
 """
-ARUNABHA EXTREME FEAR BOT v2.1
-Main entry with BTC multi-timeframe
+ARUNABHA EXTREME FEAR BOT v3.0
+Surgical execution engine
 """
 
 import asyncio
@@ -10,7 +10,15 @@ from aiohttp import web
 from datetime import datetime
 
 import config
-from core import ExtremeFearEngine, SimpleFilters, RiskManager, MarketMood, generate_signal, btc_detector
+from core import (
+    ExtremeFearEngine, 
+    SimpleFilters, 
+    RiskManager, 
+    MarketMood, 
+    generate_signal,
+    btc_detector,
+    risk_manager
+)
 from alerts.telegram_alerts import TelegramAlerts
 from exchanges.exchange_manager import ExchangeManager
 from exchanges.ws_feed import BinanceWSFeed
@@ -30,11 +38,10 @@ class ArunabhaBot:
         self.alerts = TelegramAlerts()
         self.engine = ExtremeFearEngine()
         self.filters = SimpleFilters()
-        self.risk = RiskManager()
+        self.risk = risk_manager  # Use global instance
         self.mood = MarketMood()
         self.ws = None
         
-        # 🆕 BTC data cache
         self.btc_cache = {
             "15m": [],
             "1h": [],
@@ -43,13 +50,14 @@ class ArunabhaBot:
         self.last_btc_update = None
         
     async def start(self):
-        """Start bot"""
-        logger.info("Starting %s %s", config.BOT_NAME, config.BOT_VERSION)
+        """Start surgical execution engine."""
+        logger.info("=" * 70)
+        logger.info("ARUNABHA SURGICAL EXECUTION ENGINE v3.0")
+        logger.info("=" * 70)
+        logger.info("Institutional-grade discipline initialized")
         
         await self.exchange.connect()
         await self.mood.fetch_fear_index()
-        
-        # 🆕 Pre-fetch BTC data for all timeframes
         await self._update_btc_data()
         
         self.ws = BinanceWSFeed(on_candle_close=self.on_candle_close)
@@ -61,85 +69,111 @@ class ArunabhaBot:
         await self.alerts.send_startup()
         await self.start_web_server()
         
-        logger.info("Bot running!")
+        logger.info("Engine running - All protections active")
         
-        # Keep alive with periodic BTC update
         while True:
             await asyncio.sleep(60)
             
-            # Update fear index every 5 min
             if datetime.now().minute % 5 == 0:
                 await self.mood.fetch_fear_index()
             
-            # 🆕 Update BTC data every 15 minutes
             if datetime.now().minute % 15 == 0:
                 await self._update_btc_data()
+            
+            # Check trade management every minute
+            await self._check_active_trades()
                 
     async def _update_btc_data(self):
-        """🆕 Fetch BTC data for all timeframes"""
+        """Fetch BTC multi-timeframe data."""
         try:
-            self.btc_cache["15m"] = await self.exchange.fetch_ohlcv("BTC/USDT", "15m", 100)
+            self.btc_cache["15m"] = await self.exchange.fetch_ohlcv("BTC/USDT", "15m", 200)  # Need 200 for EMA200
             self.btc_cache["1h"] = await self.exchange.fetch_ohlcv("BTC/USDT", "1h", 100)
             self.btc_cache["4h"] = await self.exchange.fetch_ohlcv("BTC/USDT", "4h", 100)
             self.last_btc_update = datetime.now()
             
-            # Log current regime
-            if self.btc_cache["15m"] and self.btc_cache["1h"] and self.btc_cache["4h"]:
+            if all(self.btc_cache.values()):
                 analysis = btc_detector.analyze(
                     self.btc_cache["15m"],
                     self.btc_cache["1h"],
                     self.btc_cache["4h"]
                 )
-                logger.info("BTC Regime: %s (Confidence: %d%%)", 
-                           analysis.regime.value, analysis.confidence)
+                logger.info("[BTC] Regime: %s | Mode: %s | Conf: %d%% | Trade: %s",
+                           analysis.regime.value, analysis.trade_mode,
+                           analysis.confidence, "YES" if analysis.can_trade else "NO")
         except Exception as exc:
-            logger.error("BTC data update failed: %s", exc)
+            logger.error("BTC update failed: %s", exc)
+    
+    async def _check_active_trades(self):
+        """Check active trades for management (BE, partial, etc.)."""
+        if not self.risk.active_trades:
+            return
+        
+        try:
+            for symbol in list(self.risk.active_trades.keys()):
+                ticker = await self.exchange.fetch_ticker(symbol)
+                current_price = ticker.get("last", 0)
+                
+                action = self.risk.check_trade_management(symbol, current_price)
+                
+                if action == "PARTIAL_EXIT":
+                    await self.alerts.send_message(f"🔒 PARTIAL EXIT: {symbol} at 1R")
+                elif action == "BREAK_EVEN":
+                    await self.alerts.send_message(f"🛡️ SL → BE: {symbol} at +0.5%")
+                elif action in ["SL_HIT", "TP_HIT"]:
+                    # These handled by candle close or manual check
+                    pass
+                    
+        except Exception as exc:
+            logger.error("Trade management error: %s", exc)
     
     async def on_candle_close(self, symbol: str, timeframe: str, ohlcv: list):
-        """Callback on candle close"""
+        """Process candle with surgical discipline."""
         if timeframe != config.TIMEFRAME:
             return
-            
-        # Check daily reset
+        
+        # Daily reset
         current_date = datetime.now().strftime("%Y-%m-%d")
         if self.risk.daily_stats["date"] != current_date:
             self.risk.reset_daily()
         
-        # 🆕 Ensure BTC data is fresh
-        if not self.btc_cache["15m"] or not self.btc_cache["1h"] or not self.btc_cache["4h"]:
+        # Ensure BTC data
+        if not all(self.btc_cache.values()):
             await self._update_btc_data()
         
         try:
+            # Fetch alt data
             ohlcv_5m = await self.exchange.fetch_ohlcv(symbol, "5m", 50)
             ohlcv_1h = await self.exchange.fetch_ohlcv(symbol, "1h", 50)
             funding = 0
             
-            # 🆕 Generate signal with multi-timeframe BTC data
+            # 🆕 SURGICAL EXECUTION ORDER enforced in generate_signal
             signal = generate_signal(
                 symbol=symbol,
                 ohlcv_15m=ohlcv,
                 ohlcv_5m=ohlcv_5m,
                 ohlcv_1h=ohlcv_1h,
                 btc_ohlcv_15m=self.btc_cache["15m"],
-                btc_ohlcv_1h=self.btc_cache["1h"],      # 🆕 New
-                btc_ohlcv_4h=self.btc_cache["4h"],      # 🆕 New
+                btc_ohlcv_1h=self.btc_cache["1h"],
+                btc_ohlcv_4h=self.btc_cache["4h"],
                 funding_rate=funding,
                 fear_index=self.mood.fear_index,
                 account_size=1000,
-                risk_manager=self.risk,
+                risk_mgr=self.risk,
                 filters=self.filters,
                 engine=self.engine,
                 mood=self.mood
             )
             
-            if signal:
+            if signal and not signal.confirmation_pending:
                 await self.alerts.send_signal(signal)
+            elif signal and signal.confirmation_pending:
+                await self.alerts.send_pending_notification(signal)
                 
         except Exception as exc:
             logger.error("Error processing %s: %s", symbol, exc)
-            
+    
     async def start_web_server(self):
-        """Health check endpoint"""
+        """Health endpoint."""
         app = web.Application()
         app.router.add_get('/health', self.health_handler)
         
@@ -148,12 +182,12 @@ class ArunabhaBot:
         site = web.TCPSite(runner, '0.0.0.0', config.WEBHOOK_PORT)
         await site.start()
         
-        logger.info("Web server on port %d", config.WEBHOOK_PORT)
-        
+        logger.info("Health server on port %d", config.WEBHOOK_PORT)
+    
     async def health_handler(self, request):
-        """Health check with BTC regime"""
+        """Health with full status."""
+        stats = self.risk.get_stats()
         
-        # Get current BTC regime if available
         btc_info = "No data"
         if self.btc_cache["15m"] and self.btc_cache["1h"] and self.btc_cache["4h"]:
             try:
@@ -162,18 +196,23 @@ class ArunabhaBot:
                     self.btc_cache["1h"],
                     self.btc_cache["4h"]
                 )
-                btc_info = f"{analysis.regime.value} ({analysis.confidence}%)"
+                btc_info = {
+                    "regime": analysis.regime.value,
+                    "mode": analysis.trade_mode,
+                    "confidence": analysis.confidence,
+                    "can_trade": analysis.can_trade
+                }
             except:
                 pass
         
         return web.json_response({
             "status": "ok",
-            "bot": f"{config.BOT_NAME} {config.BOT_VERSION}",
+            "version": "3.0-surgical",
             "fear_index": self.mood.fear_index,
-            "daily_signals": self.risk.daily_stats["total"],
-            "active_trades": len(self.risk.active_trades),
-            "btc_regime": btc_info,  # 🆕 New
-            "last_btc_update": self.last_btc_update.isoformat() if self.last_btc_update else None
+            "daily_stats": stats,
+            "btc_regime": btc_info,
+            "day_locked": stats.get("day_locked"),
+            "lock_reason": stats.get("lock_reason")
         })
 
 
