@@ -1,30 +1,21 @@
 """
-ARUNABHA SIMPLE FILTERS v2.0
-Strict filters: 8 filters, 6 pass needed
-Session quiet = BLOCK
+ARUNABHA SIMPLE FILTERS v2.1
+Fixed BTC filter + Regime detection
 """
 
 import logging
 from typing import Dict, List, Any, Tuple
 from datetime import datetime, timedelta
-import pytz
 
 import config
+from .btc_regime_detector import btc_detector, BTCRegime
 
 logger = logging.getLogger(__name__)
 
 
 class SimpleFilters:
     """
-    8 strict filters:
-    1. Session active (MANDATORY - quiet = no trade)
-    2. BTC trend OK
-    3. MTF confirm
-    4. Liquidity zone
-    5. Funding safe
-    6. Cooldown OK
-    7. EMA200 confirm (MANDATORY)
-    8. Structure shift (MANDATORY)
+    8 strict filters with proper BTC alignment
     """
     
     def __init__(self):
@@ -35,6 +26,8 @@ class SimpleFilters:
                  ohlcv_15m: List[List[float]],
                  ohlcv_1h: List[List[float]],
                  btc_ohlcv_15m: List[List[float]],
+                 btc_ohlcv_1h: List[List[float]],
+                 btc_ohlcv_4h: List[List[float]],
                  funding_rate: float,
                  symbol: str,
                  ema200_passed: bool = False,
@@ -44,7 +37,7 @@ class SimpleFilters:
         """
         results = {}
         
-        # 1. 🆕 STRICT: Session Active (MANDATORY)
+        # 1. Session Active
         session_ok, session_msg = self._check_session_strict(ohlcv_15m)
         results["session"] = {
             "pass": session_ok,
@@ -52,12 +45,12 @@ class SimpleFilters:
             "msg": session_msg
         }
         
-        # 2. BTC Trend OK
-        btc_ok = self._check_btc_trend(direction, btc_ohlcv_15m)
+        # 2. 🆕 ADVANCED BTC Regime Detection
+        btc_ok, btc_msg = self._check_btc_regime(direction, btc_ohlcv_15m, btc_ohlcv_1h, btc_ohlcv_4h)
         results["btc_trend"] = {
             "pass": btc_ok,
-            "weight": 2,
-            "msg": "Aligned" if btc_ok else "Conflict"
+            "weight": 3,
+            "msg": btc_msg
         }
         
         # 3. MTF Confirm
@@ -92,14 +85,14 @@ class SimpleFilters:
             "msg": "Ready" if cool_ok else "Waiting"
         }
         
-        # 7. 🆕 EMA200 Confirm (MANDATORY)
+        # 7. EMA200 Confirm
         results["ema200"] = {
             "pass": ema200_passed,
             "weight": 3,
             "msg": "Confirmed" if ema200_passed else "Failed"
         }
         
-        # 8. 🆕 Structure Shift (MANDATORY)
+        # 8. Structure Shift
         results["structure"] = {
             "pass": structure_passed,
             "weight": 3,
@@ -110,21 +103,43 @@ class SimpleFilters:
         passed = sum(1 for r in results.values() if r["pass"])
         total = len(results)
         
-        # 🆕 STRICT: Must pass Session, EMA200, Structure
-        mandatory_pass = session_ok and ema200_passed and structure_passed
+        # STRICT: Must pass Session, BTC, EMA200, Structure
+        mandatory_pass = session_ok and btc_ok and ema200_passed and structure_passed
         
         logger.info(
-            "Filters %s: %d/%d | Mandatory: %s | Session:%s EMA200:%s Structure:%s",
+            "Filters %s: %d/%d | Mandatory: %s | BTC:%s",
             symbol, passed, total, mandatory_pass,
-            results["session"]["msg"],
-            results["ema200"]["msg"],
-            results["structure"]["msg"]
+            "✅" if btc_ok else "❌"
         )
         
         return passed, total, results, mandatory_pass
     
+    def _check_btc_regime(self, direction: str, 
+                          btc_15m: List, 
+                          btc_1h: List, 
+                          btc_4h: List) -> Tuple[bool, str]:
+        """
+        🆕 ADVANCED: Use BTC Regime Detector
+        """
+        if not btc_15m or len(btc_15m) < 50:
+            return False, "No BTC data"
+        
+        # Analyze regime
+        analysis = btc_detector.analyze(btc_15m, btc_1h, btc_4h)
+        
+        # Check if we can trade this alt
+        can_trade, reason = btc_detector.should_trade_alt(direction, min_confidence=50)
+        
+        regime_name = analysis.regime.value.replace("_", " ").upper()
+        confidence = analysis.confidence
+        
+        if can_trade:
+            return True, f"✅ BTC {regime_name} ({confidence}%) - {reason}"
+        else:
+            return False, f"❌ BTC {regime_name} ({confidence}%) - {reason}"
+    
     def _check_session_strict(self, ohlcv: List[List[float]]) -> Tuple[bool, str]:
-        """🆕 STRICT: Volume and volatility MUST be sufficient"""
+        """Volume and volatility check"""
         if len(ohlcv) < 10:
             return False, "No data"
             
@@ -132,14 +147,12 @@ class SimpleFilters:
         avg_vol = sum(volumes[:-1]) / len(volumes[:-1])
         last_vol = volumes[-1]
         
-        # ATR calculation
         atr = self._calculate_atr(ohlcv[-10:])
         current_price = ohlcv[-1][4]
         atr_pct = (atr / current_price) * 100 if current_price > 0 else 0
         
-        # 🆕 STRICT: Both volume AND ATR must be good
         volume_ok = last_vol > avg_vol * 0.8
-        atr_ok = atr_pct > 0.3  # Increased from 0.2%
+        atr_ok = atr_pct > 0.3
         
         if not volume_ok and not atr_ok:
             return False, f"❌ QUIET: Vol {last_vol/avg_vol:.1f}x, ATR {atr_pct:.2f}%"
@@ -150,26 +163,8 @@ class SimpleFilters:
         
         return True, f"✅ Active: Vol {last_vol/avg_vol:.1f}x, ATR {atr_pct:.2f}%"
     
-    def _check_btc_trend(self, direction: str, btc_ohlcv: List[List[float]]) -> bool:
-        """BTC not conflicting with our trade"""
-        if not btc_ohlcv or len(btc_ohlcv) < 21:
-            return True
-            
-        closes = [c[4] for c in btc_ohlcv[-21:]]
-        ema9 = sum(closes[-9:]) / 9
-        ema21 = sum(closes[-21:]) / 21
-        
-        btc_bullish = ema9 > ema21
-        
-        if direction == "LONG":
-            return btc_bullish or not btc_bullish
-        else:
-            return not btc_bullish or btc_bullish
-        
-        return True
-    
     def _check_mtf(self, direction: str, ohlcv_1h: List[List[float]]) -> bool:
-        """1h timeframe confirms 15m signal"""
+        """1h timeframe confirms"""
         if not ohlcv_1h or len(ohlcv_1h) < 21:
             return True
             
@@ -185,7 +180,7 @@ class SimpleFilters:
             return not h1_bullish
     
     def _check_liquidity(self, direction: str, ohlcv: List[List[float]]) -> bool:
-        """Near support (long) or resistance (short)"""
+        """Near support/resistance"""
         if len(ohlcv) < 20:
             return True
             
@@ -205,7 +200,7 @@ class SimpleFilters:
             return near_resistance
     
     def _check_funding(self, direction: str, funding_rate: float) -> bool:
-        """Not entering crowded trade"""
+        """Not extreme funding"""
         extreme_long = funding_rate > 0.001
         extreme_short = funding_rate < -0.001
         
@@ -217,7 +212,7 @@ class SimpleFilters:
         return True
     
     def _check_cooldown(self, symbol: str) -> bool:
-        """30 min per coin cooldown"""
+        """30 min cooldown"""
         if symbol not in self.cooldown_map:
             return True
             
@@ -228,11 +223,9 @@ class SimpleFilters:
         return True
     
     def update_cooldown(self, symbol: str):
-        """Call when signal taken"""
         self.cooldown_map[symbol] = datetime.now()
     
     def _calculate_atr(self, ohlcv: List[List[float]]) -> float:
-        """Simple ATR"""
         if len(ohlcv) < 2:
             return 0.0
             
