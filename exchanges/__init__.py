@@ -1,13 +1,9 @@
 """
-Exchanges package exports for ARUNABHA SMART v10.1
-
-Modules:
-  exchange_manager  — unified REST interface (Binance / CoinDCX)
-  ws_feed           — Binance WebSocket kline feed (replaces REST polling)
+Exchange modules for ARUNABHA EXTREME FEAR BOT
 """
 
 from .exchange_manager import ExchangeManager
-from .ws_feed          import BinanceWSFeed
+from .ws_feed import BinanceWSFeed
 
 __all__ = [
     "ExchangeManager",
