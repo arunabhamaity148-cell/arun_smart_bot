@@ -13,11 +13,11 @@ import config
 from core import (
     ExtremeFearEngine, 
     SimpleFilters, 
-    RiskManager, 
+    RiskManager,
     MarketMood, 
     generate_signal,
     btc_detector,
-    risk_manager
+    risk_manager  # Global instance
 )
 from alerts.telegram_alerts import TelegramAlerts
 from exchanges.exchange_manager import ExchangeManager
@@ -80,13 +80,12 @@ class ArunabhaBot:
             if datetime.now().minute % 15 == 0:
                 await self._update_btc_data()
             
-            # Check trade management every minute
             await self._check_active_trades()
                 
     async def _update_btc_data(self):
         """Fetch BTC multi-timeframe data."""
         try:
-            self.btc_cache["15m"] = await self.exchange.fetch_ohlcv("BTC/USDT", "15m", 200)  # Need 200 for EMA200
+            self.btc_cache["15m"] = await self.exchange.fetch_ohlcv("BTC/USDT", "15m", 200)
             self.btc_cache["1h"] = await self.exchange.fetch_ohlcv("BTC/USDT", "1h", 100)
             self.btc_cache["4h"] = await self.exchange.fetch_ohlcv("BTC/USDT", "4h", 100)
             self.last_btc_update = datetime.now()
@@ -104,7 +103,7 @@ class ArunabhaBot:
             logger.error("BTC update failed: %s", exc)
     
     async def _check_active_trades(self):
-        """Check active trades for management (BE, partial, etc.)."""
+        """Check active trades for management."""
         if not self.risk.active_trades:
             return
         
@@ -116,12 +115,9 @@ class ArunabhaBot:
                 action = self.risk.check_trade_management(symbol, current_price)
                 
                 if action == "PARTIAL_EXIT":
-                    await self.alerts.send_message(f"🔒 PARTIAL EXIT: {symbol} at 1R")
+                    logger.info(f"[MANAGE] PARTIAL EXIT: {symbol} at 1R")
                 elif action == "BREAK_EVEN":
-                    await self.alerts.send_message(f"🛡️ SL → BE: {symbol} at +0.5%")
-                elif action in ["SL_HIT", "TP_HIT"]:
-                    # These handled by candle close or manual check
-                    pass
+                    logger.info(f"[MANAGE] SL → BE: {symbol} at +0.5%")
                     
         except Exception as exc:
             logger.error("Trade management error: %s", exc)
@@ -131,22 +127,18 @@ class ArunabhaBot:
         if timeframe != config.TIMEFRAME:
             return
         
-        # Daily reset
         current_date = datetime.now().strftime("%Y-%m-%d")
         if self.risk.daily_stats["date"] != current_date:
             self.risk.reset_daily()
         
-        # Ensure BTC data
         if not all(self.btc_cache.values()):
             await self._update_btc_data()
         
         try:
-            # Fetch alt data
             ohlcv_5m = await self.exchange.fetch_ohlcv(symbol, "5m", 50)
             ohlcv_1h = await self.exchange.fetch_ohlcv(symbol, "1h", 50)
             funding = 0
             
-            # 🆕 SURGICAL EXECUTION ORDER enforced in generate_signal
             signal = generate_signal(
                 symbol=symbol,
                 ohlcv_15m=ohlcv,
@@ -167,7 +159,7 @@ class ArunabhaBot:
             if signal and not signal.confirmation_pending:
                 await self.alerts.send_signal(signal)
             elif signal and signal.confirmation_pending:
-                await self.alerts.send_pending_notification(signal)
+                logger.info(f"[PENDING] {symbol} waiting confirmation")
                 
         except Exception as exc:
             logger.error("Error processing %s: %s", symbol, exc)
