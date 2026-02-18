@@ -1,460 +1,231 @@
 """
-Smart Signal Engine — ARUNABHA SMART v10.2
-
-ADAPTIVE STRATEGY — Market Regime-aware:
-  ① TRENDING      → RSI 35/65, SL 1.5×ATR, TP 2.5×ATR, Full size
-  ② RANGING       → RSI 30/70, SL 1.2×ATR, TP 1.8×ATR, 0.7× size
-  ③ EXTREME_FEAR  → RSI 25/75, SL 2.0×ATR, TP 3.5×ATR, 0.5× size
-
-SMART MONEY CONCEPT (SMC) LAYER:
-  • Market Structure (BOS/CHOCH)
-  • Order Block
-  • Fair Value Gap (FVG)
-  • Premium / Discount zones
-
-v10.1 LAYERS:
-  • MTF Confirmation (1h bias)
-  • Funding Rate Filter
-  • VPOC / Volume Profile
+ARUNABHA SMART SIGNAL v1.0
+Integrates Extreme Fear Engine + Simple Filters + Risk Manager
 """
 
 import logging
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Tuple
-
+from typing import Optional, Dict, Any, List
 import numpy as np
 
 import config
-from .timeframe_selector import select_timeframe
-from .smart_filters      import all_filters_pass
-from .smart_sizing       import calculate_position_size
-from .vpoc_profile       import build_volume_profile, vpoc_confirms, vpoc_label
-from .mtf_confirmation   import mtf_confirms, mtf_bias_label
-from .market_regime      import detect_regime, RegimeParams, regime_label, REGIME_RANGING
+from .extreme_fear_engine import ExtremeFearEngine
+from .simple_filters import SimpleFilters
+from .risk_manager import RiskManager, Trade
+from .market_mood import MarketMood
 
 logger = logging.getLogger(__name__)
 
 
-# ─── SMC helpers ─────────────────────────────────────────────────────────────
-
-def _detect_market_structure(highs: np.ndarray, lows: np.ndarray) -> str:
-    if len(highs) < 10:
-        return "NEUTRAL"
-    h  = highs[-10:]
-    l  = lows[-10:]
-    hh = h[-1] > h[-5]
-    hl = l[-1] > l[-5]
-    lh = h[-1] < h[-5]
-    ll = l[-1] < l[-5]
-    if hh and hl:
-        return "BULLISH"
-    elif lh and ll:
-        return "BEARISH"
-    return "NEUTRAL"
-
-
-def _find_order_block(
-    opens: np.ndarray, closes: np.ndarray,
-    highs: np.ndarray, lows: np.ndarray,
-    direction: str, lookback: int = 20,
-) -> Optional[Tuple[float, float]]:
-    if len(closes) < lookback + 3:
-        return None
-    arr_o = opens[-lookback:]
-    arr_c = closes[-lookback:]
-    arr_h = highs[-lookback:]
-    arr_l = lows[-lookback:]
-    if direction == "LONG":
-        for i in range(len(arr_c) - 3, 1, -1):
-            if arr_c[i] < arr_o[i]:
-                if arr_c[i+1] > arr_o[i+1] and arr_c[i+2] > arr_o[i+2]:
-                    return (float(arr_l[i]), float(arr_h[i]))
-    else:
-        for i in range(len(arr_c) - 3, 1, -1):
-            if arr_c[i] > arr_o[i]:
-                if arr_c[i+1] < arr_o[i+1] and arr_c[i+2] < arr_o[i+2]:
-                    return (float(arr_l[i]), float(arr_h[i]))
-    return None
-
-
-def _find_fvg(
-    highs: np.ndarray, lows: np.ndarray,
-    direction: str, lookback: int = 15,
-) -> Optional[Tuple[float, float]]:
-    if len(highs) < lookback + 3:
-        return None
-    h = highs[-lookback:]
-    l = lows[-lookback:]
-    if direction == "LONG":
-        for i in range(len(h) - 3, 0, -1):
-            if l[i+2] > h[i]:
-                return (float(h[i]), float(l[i+2]))
-    else:
-        for i in range(len(h) - 3, 0, -1):
-            if h[i+2] < l[i]:
-                return (float(h[i+2]), float(l[i]))
-    return None
-
-
-def _premium_discount_zone(highs: np.ndarray, lows: np.ndarray) -> Dict[str, float]:
-    if len(highs) < 20:
-        return {"equilibrium": 0.0, "premium_start": 0.0, "discount_end": 0.0}
-    swing_high = float(np.max(highs[-20:]))
-    swing_low  = float(np.min(lows[-20:]))
-    equil = (swing_high + swing_low) / 2
-    return {
-        "equilibrium":   equil,
-        "premium_start": equil,
-        "discount_end":  equil,
-        "swing_high":    swing_high,
-        "swing_low":     swing_low,
-    }
-
-
-def _smc_confluence(
-    direction: str, entry: float,
-    opens: np.ndarray, closes: np.ndarray,
-    highs: np.ndarray, lows: np.ndarray,
-) -> Dict[str, Any]:
-    structure   = _detect_market_structure(highs, lows)
-    order_block = _find_order_block(opens, closes, highs, lows, direction)
-    fvg         = _find_fvg(highs, lows, direction)
-    pd_zone     = _premium_discount_zone(highs, lows)
-    equil       = pd_zone["equilibrium"]
-
-    if direction == "LONG":
-        structure_ok = structure == "BULLISH"
-        in_discount  = entry < equil and equil > 0
-    else:
-        structure_ok = structure == "BEARISH"
-        in_discount  = entry > equil and equil > 0
-
-    near_ob = False
-    if order_block:
-        ob_low, ob_high = order_block
-        near_ob = ob_low <= entry <= ob_high * 1.005 if direction == "LONG" \
-             else ob_low * 0.995 <= entry <= ob_high
-
-    in_fvg = False
-    if fvg:
-        fvg_low, fvg_high = fvg
-        in_fvg = fvg_low <= entry <= fvg_high
-
-    smc_score = sum([structure_ok, in_discount, near_ob, in_fvg])
-    return {
-        "structure":    structure,
-        "structure_ok": structure_ok,
-        "in_discount":  in_discount,
-        "near_ob":      near_ob,
-        "in_fvg":       in_fvg,
-        "smc_score":    smc_score,
-        "order_block":  order_block,
-        "fvg":          fvg,
-        "equilibrium":  equil,
-        "swing_high":   pd_zone.get("swing_high", 0),
-        "swing_low":    pd_zone.get("swing_low", 0),
-    }
-
-
-# ─── Indicator helpers ────────────────────────────────────────────────────────
-
-def _ema(values: np.ndarray, period: int) -> float:
-    if len(values) < period:
-        return float(np.mean(values))
-    k   = 2.0 / (period + 1)
-    ema = float(values[0])
-    for v in values[1:]:
-        ema = v * k + ema * (1 - k)
-    return ema
-
-
-def _rsi(closes: np.ndarray, period: int = 14) -> float:
-    if len(closes) < period + 1:
-        return 50.0
-    deltas   = np.diff(closes)
-    gains    = np.where(deltas > 0, deltas, 0.0)
-    losses   = np.where(deltas < 0, -deltas, 0.0)
-    avg_gain = float(np.mean(gains[:period]))
-    avg_loss = float(np.mean(losses[:period]))
-    for i in range(period, len(deltas)):
-        avg_gain = (avg_gain * (period - 1) + gains[i])  / period
-        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
-    if avg_loss == 0:
-        return 100.0
-    return round(100 - (100 / (1 + avg_gain / avg_loss)), 2)
-
-
-def _atr(highs, lows, closes, period=14):
-    n = len(closes)
-    if n < 2:
-        return 0.0
-    trs = [max(highs[i] - lows[i],
-               abs(highs[i] - closes[i-1]),
-               abs(lows[i] - closes[i-1]))
-           for i in range(1, n)]
-    trs = np.array(trs)
-    if len(trs) < period:
-        return float(np.mean(trs))
-    atr = float(np.mean(trs[:period]))
-    for tr in trs[period:]:
-        atr = (atr * (period - 1) + tr) / period
-    return atr
-
-
-# ─── Signal Result ────────────────────────────────────────────────────────────
-
 @dataclass
 class SignalResult:
-    symbol:         str
-    direction:      str
-    timeframe:      str
-    entry:          float
-    stop_loss:      float
-    take_profit:    float
-    rr_ratio:       float
-    rsi:            float
-    ema_fast:       float
-    ema_slow:       float
-    volume_ratio:   float
+    symbol: str
+    direction: str
+    entry: float
+    stop_loss: float
+    take_profit: float
+    rr_ratio: float
+    position_size: Dict[str, float]
+    extreme_fear_score: int
+    extreme_fear_grade: str
     filters_passed: int
-    filters_total:  int
-    filter_detail:  Dict[str, bool] = field(default_factory=dict)
-    sizing:         Dict[str, Any]  = field(default_factory=dict)
-    smc:            Dict[str, Any]  = field(default_factory=dict)
-    quality:        str = "B"
-    skip_reason:    str = ""
-    # v10.1
-    mtf_label:      str = ""
-    vpoc_label:     str = ""
-    funding_label:  str = ""
-    # v10.2
-    regime:         str = ""
-    regime_label:   str = ""
+    logic_triggered: List[str]
+    market_mood: str
+    session_info: str
+    human_insight: str
+    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
 
-
-# ─── Main signal generator ───────────────────────────────────────────────────
 
 def generate_signal(
-    symbol:            str,
-    ohlcv:             List[List[float]],
-    orderbook:         Dict[str, Any],
-    btc_ohlcv:         List[List[float]],
-    account_size_usd:  float = None,
-    # v10.1
-    ohlcv_1h:          Optional[List[List[float]]] = None,
-    funding_long_ok:   Optional[bool]               = None,
-    funding_short_ok:  Optional[bool]               = None,
-    funding_long_lbl:  str                          = "",
-    funding_short_lbl: str                          = "",
-    # v10.2
-    btc_funding_rate:  float                        = 0.0,
-    btc_ohlcv_1h:      Optional[List[List[float]]] = None,
+    symbol: str,
+    ohlcv_15m: List[List[float]],
+    ohlcv_5m: List[List[float]],
+    ohlcv_1h: List[List[float]],
+    btc_ohlcv_15m: List[List[float]],
+    funding_rate: float,
+    fear_index: int,
+    account_size: float,
+    risk_manager: RiskManager,
+    filters: SimpleFilters,
+    engine: ExtremeFearEngine,
+    mood: MarketMood
 ) -> Optional[SignalResult]:
     """
-    Adaptive signal pipeline:
-    1. Regime detection  (TRENDING / RANGING / EXTREME_FEAR)
-    2. Core rules        (RSI + EMA + Volume — thresholds from regime)
-    3. RR check
-    4. SMC layer
-    5. Smart Filters v2  (9 filters)
-    6. Position sizing   (scaled by regime size_multiplier)
+    Main signal generation pipeline
     """
-    if account_size_usd is None:
-        account_size_usd = config.ACCOUNT_SIZE_USD
-
-    min_candles = config.CANDLE_LOOKBACK // 2
-    if not ohlcv or len(ohlcv) < min_candles:
-        logger.info("⏭ SKIP %s — only %d candles (need %d)",
-                    symbol, len(ohlcv) if ohlcv else 0, min_candles)
+    
+    # 1. Check if we can trade
+    if not risk_manager.can_trade(symbol):
         return None
-
-    # ── Regime Detection (BTC 1h preferred, fallback to 15m) ─────────────────
-    regime_ohlcv = btc_ohlcv_1h if btc_ohlcv_1h else btc_ohlcv
-    regime_name, regime_params, regime_debug = detect_regime(
-        btc_ohlcv    = regime_ohlcv,
-        funding_rate = btc_funding_rate,
+    
+    # 2. Check market mood
+    mood_data = mood.get_mood()
+    if not mood_data["should_trade"]:
+        logger.info("%s: Fear index %d too high, stopping", symbol, fear_index)
+        return None
+    
+    # 3. Run Extreme Fear Engine (your 10 logic)
+    engine_result = engine.evaluate(
+        ohlcv_15m=ohlcv_15m,
+        ohlcv_5m=ohlcv_5m,
+        ohlcv_1h=ohlcv_1h,
+        btc_ohlcv_15m=btc_ohlcv_15m,
+        funding_rate=funding_rate,
+        fear_index=fear_index
     )
-    regime_lbl = regime_label(regime_name, regime_params)
-
-    timeframe = select_timeframe(ohlcv)
-
-    arr     = np.array(ohlcv, dtype=float)
-    opens   = arr[:, 1]
-    highs   = arr[:, 2]
-    lows    = arr[:, 3]
-    closes  = arr[:, 4]
-    volumes = arr[:, 5]
-
-    # ── Indicators ───────────────────────────────────────────────────────────
-    rsi      = _rsi(closes, config.RSI_PERIOD)
-    ema_fast = _ema(closes, config.EMA_FAST)
-    ema_slow = _ema(closes, config.EMA_SLOW)
-    atr      = _atr(highs, lows, closes, config.ATR_PERIOD)
-
-    window     = min(config.VOLUME_LOOKBACK, len(volumes) - 1)
-    avg_volume = float(np.mean(volumes[-window-1:-1])) if window > 0 else 1.0
-    last_vol   = float(volumes[-1])
-    vol_ratio  = last_vol / avg_volume if avg_volume > 0 else 0.0
-    entry      = float(closes[-1])
-
-    # ── CORE RULES — adaptive based on regime ────────────────────────────────
-    rsi_ob  = regime_params.rsi_oversold
-    rsi_os  = regime_params.rsi_overbought
-    vol_min = regime_params.volume_multiplier
-
-    # EXTREME_FEAR → panic reversal logic (ignore EMA direction)
-    if regime_name == "EXTREME_FEAR":
-        # Panic capitulation — RSI extreme + volume spike = reversal
-        long_core  = rsi < rsi_ob  and vol_ratio >= vol_min
-        short_core = rsi > rsi_os  and vol_ratio >= vol_min
-        skip_reason = (
-            f"RSI={rsi:.1f} (need <{rsi_ob:.0f}/>{rsi_os:.0f}) | "
-            f"VolRatio={vol_ratio:.2f} (need >{vol_min:.1f}) | "
-            f"EMA check bypassed (panic mode)"
-        )
-    else:
-        # Normal TRENDING/RANGING — strict EMA alignment required
-        long_core  = rsi < rsi_ob  and ema_fast > ema_slow and vol_ratio >= vol_min
-        short_core = rsi > rsi_os  and ema_fast < ema_slow and vol_ratio >= vol_min
-        skip_reason = (
-            f"RSI={rsi:.1f} (need <{rsi_ob:.0f}/>{rsi_os:.0f}) | "
-            f"EMA9={ema_fast:.2f} {'>' if ema_fast > ema_slow else '<'} EMA21={ema_slow:.2f} | "
-            f"VolRatio={vol_ratio:.2f} (need >{vol_min:.1f})"
-        )
-
-    if not long_core and not short_core:
-        logger.info(
-            "⏭ SKIP %s [%s] [%s] — Core rules failed | %s",
-            symbol, timeframe, regime_name, skip_reason,
-        )
+    
+    if not engine_result["can_trade"]:
+        logger.info("%s: Extreme Fear Score %d too low", 
+                   symbol, engine_result["score"])
         return None
-
-    direction = "LONG" if long_core else "SHORT"
-
-    # ── SL / TP — multipliers from regime ────────────────────────────────────
-    sl_mult = regime_params.atr_sl_mult
-    tp_mult = regime_params.atr_tp_mult
-
-    if direction == "LONG":
-        stop_loss   = entry - atr * sl_mult
-        take_profit = entry + atr * tp_mult
-    else:
-        stop_loss   = entry + atr * sl_mult
-        take_profit = entry - atr * tp_mult
-
-    sl_dist  = abs(entry - stop_loss)
-    tp_dist  = abs(entry - take_profit)
-    rr_ratio = tp_dist / sl_dist if sl_dist > 0 else 0.0
-
-    if rr_ratio < config.MIN_RR_RATIO:
-        logger.info(
-            "⏭ SKIP %s [%s] %s [%s] — RR too low %.2f | ATR=%.4f",
-            symbol, timeframe, direction, regime_name, rr_ratio, atr,
-        )
+    
+    # 4. Run Simple Filters (6 filters, need 4)
+    filters_passed, filters_total, filter_details = filters.evaluate(
+        direction="LONG",  # Will determine below
+        ohlcv_15m=ohlcv_15m,
+        ohlcv_1h=ohlcv_1h,
+        btc_ohlcv_15m=btc_ohlcv_15m,
+        funding_rate=funding_rate,
+        symbol=symbol
+    )
+    
+    if filters_passed < config.MIN_FILTERS_PASS:
+        logger.info("%s: Filters %d/%d, need %d", 
+                   symbol, filters_passed, filters_total, config.MIN_FILTERS_PASS)
         return None
-
-    # ── Direction-specific funding ────────────────────────────────────────────
-    funding_ok  = funding_long_ok  if direction == "LONG" else funding_short_ok
-    funding_lbl = funding_long_lbl if direction == "LONG" else funding_short_lbl
-
-    # ── SMC ───────────────────────────────────────────────────────────────────
-    smc = _smc_confluence(direction, entry, opens, closes, highs, lows)
+    
+    # 5. Determine direction from top logic
+    direction = _determine_direction(engine_result["top_logic"], ohlcv_15m)
+    
+    # Re-run filters with correct direction
+    filters_passed, filters_total, filter_details = filters.evaluate(
+        direction=direction,
+        ohlcv_15m=ohlcv_15m,
+        ohlcv_1h=ohlcv_1h,
+        btc_ohlcv_15m=btc_ohlcv_15m,
+        funding_rate=funding_rate,
+        symbol=symbol
+    )
+    
+    if filters_passed < config.MIN_FILTERS_PASS:
+        return None
+    
+    # 6. Calculate SL/TP
+    atr = _calculate_atr(ohlcv_15m)
+    sl_tp = risk_manager.calculate_sl_tp(direction, ohlcv_15m[-1][4], atr)
+    
+    if sl_tp["rr_ratio"] < config.MIN_RR_RATIO:
+        logger.info("%s: RR %.2f too low", symbol, sl_tp["rr_ratio"])
+        return None
+    
+    # 7. Calculate position size
+    entry = ohlcv_15m[-1][4]
+    position = risk_manager.calculate_position(
+        account_size, entry, sl_tp["stop_loss"]
+    )
+    
+    # 8. Create trade object
+    from datetime import datetime
+    trade = Trade(
+        symbol=symbol,
+        direction=direction,
+        entry=entry,
+        stop_loss=sl_tp["stop_loss"],
+        take_profit=sl_tp["take_profit"],
+        size_usd=position.get("position_usd", 0),
+        timestamp=datetime.now(),
+        max_holding_minutes=90 if mood_data["mood"] == "EXTREME_FEAR" else 120
+    )
+    
+    # 9. Register trade
+    risk_manager.open_trade(trade)
+    filters.update_cooldown(symbol)
+    
+    # 10. Build human insight
+    insight = _build_insight(
+        mood_data, engine_result, filters_passed, direction
+    )
+    
     logger.info(
-        "📐 SMC %s [%s] %s | Structure=%s Discount=%s OB=%s FVG=%s Score=%d/4",
-        symbol, timeframe, direction,
-        smc["structure"], smc["in_discount"], smc["near_ob"], smc["in_fvg"],
-        smc["smc_score"],
+        "✅ SIGNAL %s %s | Score: %d/%d | Grade: %s | RR: %.2f | Filters: %d/6",
+        symbol, direction, engine_result["score"], 100,
+        engine_result["grade"], sl_tp["rr_ratio"], filters_passed
     )
-
-    # ── VPOC ──────────────────────────────────────────────────────────────────
-    profile    = build_volume_profile(ohlcv)
-    vpoc_ok, _ = vpoc_confirms(direction, entry, profile)
-    vpoc_lbl   = vpoc_label(profile, entry)
-
-    # ── MTF ───────────────────────────────────────────────────────────────────
-    mtf_lbl = mtf_bias_label(ohlcv_1h or [])
-
-    # ── Smart Filters (9, min from regime) ────────────────────────────────────
-    passed, filter_detail = all_filters_pass(
-        direction    = direction,
-        entry_price  = entry,
-        ohlcv        = ohlcv,
-        orderbook    = orderbook,
-        btc_ohlcv    = btc_ohlcv,
-        alt_ohlcv    = ohlcv,
-        ohlcv_1h     = ohlcv_1h,
-        funding_ok   = funding_ok,
-        vpoc_ok      = vpoc_ok,
-        min_pass     = regime_params.min_filters_pass,
-    )
-
-    filters_passed = sum(1 for v in filter_detail.values() if v)
-    filters_total  = len(filter_detail)
-
-    filter_str = " | ".join(
-        f"{k}={'✓' if v else '✗'}" for k, v in filter_detail.items()
-    )
-    logger.info(
-        "🔍 FILTERS %s [%s] %s [%s] — %d/%d passed | %s",
-        symbol, timeframe, direction, regime_name,
-        filters_passed, filters_total, filter_str,
-    )
-
-    if not passed:
-        logger.info(
-            "⏭ SKIP %s [%s] %s [%s] — %d/%d filters (need %d)",
-            symbol, timeframe, direction, regime_name,
-            filters_passed, filters_total, regime_params.min_filters_pass,
-        )
-        return None
-
-    # ── Quality Grade ─────────────────────────────────────────────────────────
-    total_score = filters_passed + smc["smc_score"]
-    if total_score >= 11:
-        quality = "A+"
-    elif total_score >= 9:
-        quality = "A"
-    elif total_score >= 7:
-        quality = "B"
-    else:
-        quality = "C"
-
-    # ── Position Sizing (regime size_multiplier applied) ──────────────────────
-    adjusted_account = account_size_usd * regime_params.size_multiplier
-    sizing = calculate_position_size(adjusted_account, entry, stop_loss, ohlcv)
-
-    logger.info(
-        "✅ SIGNAL %s [%s] %s [%s] | Entry=%.4f SL=%.4f TP=%.4f | "
-        "RR=%.2f | RSI=%.1f | Vol=%.2f× | SMC=%d/4 | "
-        "Filters=%d/%d | Grade=%s | Size=%.0f%%",
-        symbol, timeframe, direction, regime_name,
-        entry, stop_loss, take_profit,
-        rr_ratio, rsi, vol_ratio, smc["smc_score"],
-        filters_passed, filters_total, quality,
-        regime_params.size_multiplier * 100,
-    )
-
+    
     return SignalResult(
-        symbol         = symbol,
-        direction      = direction,
-        timeframe      = timeframe,
-        entry          = round(entry, 6),
-        stop_loss      = round(stop_loss, 6),
-        take_profit    = round(take_profit, 6),
-        rr_ratio       = round(rr_ratio, 2),
-        rsi            = rsi,
-        ema_fast       = round(ema_fast, 6),
-        ema_slow       = round(ema_slow, 6),
-        volume_ratio   = round(vol_ratio, 2),
-        filters_passed = filters_passed,
-        filters_total  = filters_total,
-        filter_detail  = filter_detail,
-        sizing         = sizing,
-        smc            = smc,
-        quality        = quality,
-        mtf_label      = mtf_lbl,
-        vpoc_label     = vpoc_lbl,
-        funding_label  = funding_lbl,
-        regime         = regime_name,
-        regime_label   = regime_lbl,
+        symbol=symbol,
+        direction=direction,
+        entry=entry,
+        stop_loss=sl_tp["stop_loss"],
+        take_profit=sl_tp["take_profit"],
+        rr_ratio=sl_tp["rr_ratio"],
+        position_size=position,
+        extreme_fear_score=engine_result["score"],
+        extreme_fear_grade=engine_result["grade"],
+        filters_passed=filters_passed,
+        logic_triggered=engine_result["top_logic"],
+        market_mood=mood_data["emoji"] + " " + mood_data["mood"],
+        session_info=", ".join(mood.is_session_active()["active_sessions"]),
+        human_insight=insight
     )
+
+
+def _determine_direction(top_logic: List[str], ohlcv: List[List[float]]) -> str:
+    """Determine direction from triggered logic"""
+    # Most extreme fear logic are bullish reversal
+    bullish_logic = [
+        "Liquidity Sweep", "RSI Capitulation", "Bear Trap",
+        "Funding Extreme", "Demand OB", "EMA200 Reclaim",
+        "MTF Divergence", "Session Reversal"
+    ]
+    
+    bearish_logic = ["BTC Calm + Alt Strong"]  # Can be either
+    
+    bullish_count = sum(1 for l in top_logic if l in bullish_logic)
+    
+    # Default to LONG in extreme fear (mean reversion)
+    return "LONG" if bullish_count > 0 else "SHORT"
+
+
+def _build_insight(mood: Dict, engine: Dict, filters: int, direction: str) -> str:
+    """Build human-readable insight"""
+    lines = []
+    
+    # Mood context
+    if mood["mood"] == "EXTREME_FEAR":
+        lines.append("😱 EXTREME FEAR: Choto profit, quick exit")
+    elif mood["mood"] == "FEAR":
+        lines.append("⚠️ FEAR: Cautious, reduce size")
+    
+    # Logic summary
+    lines.append(f"🧠 Logic: {', '.join(engine['top_logic'][:3])}")
+    
+    # Filter summary
+    lines.append(f"🔍 Filters: {filters}/6 passed")
+    
+    # Direction insight
+    if direction == "LONG":
+        lines.append("🟢 LONG: Panic reversal, mean reversion")
+    else:
+        lines.append("🔴 SHORT: Weakness continuation")
+    
+    return " | ".join(lines)
+
+
+def _calculate_atr(ohlcv: List[List[float]], period: int = 14) -> float:
+    """Calculate ATR"""
+    if len(ohlcv) < period + 1:
+        return 0.0
+        
+    trs = []
+    for i in range(1, len(ohlcv)):
+        high = ohlcv[i][2]
+        low = ohlcv[i][3]
+        prev_close = ohlcv[i-1][4]
+        tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+        trs.append(tr)
+    
+    return sum(trs[-period:]) / period
+
+
+from datetime import datetime
