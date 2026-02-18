@@ -1,215 +1,185 @@
-# ⚡ ARUNABHA SMART v10.0
+# 🔥 ARUNABHA SURGICAL EXECUTION ENGINE v3.0
 
-> **"Simple robust rules beat complex overfitted models"**
-
-একটি production-grade cryptocurrency trading signal bot যা manual trading-এর জন্য তৈরি। কোনো auto-execution নেই — bot শুধু signal দেয়, সিদ্ধান্ত আপনার।
-
----
-
-## 🎯 Bot কী করে?
-
-প্রতি ৫ মিনিটে ৬টি crypto pair scan করে এবং যখন সব condition মিলে যায়, তখন Telegram-এ একটি বিস্তারিত signal পাঠায়। Signal-এ থাকে:
-
-- Entry price, Stop Loss, Take Profit
-- R:R Ratio (Risk:Reward)
-- Smart Money analysis (Order Block, FVG, Market Structure)
-- Position size suggestion (কত টাকা লাগাবেন)
+Institutional-Grade Crypto Futures Decision Support System  
+Designed for disciplined, capital-protected manual trading.
 
 ---
 
-## 📊 Signal কীভাবে তৈরি হয়?
+## 📌 Overview
 
-### ধাপ ১ — Core Rules (Simple & Robust)
+ARUNABHA v3.0 একটি **Surgical Execution Engine**  
+যা crypto futures market-এ high-quality signal generate করে  
+কিন্তু auto-trade করে না।
 
-```
-LONG  সংকেত = RSI < 35  AND EMA9 > EMA21 AND Volume > 1.2× গড়
-SHORT সংকেত = RSI > 65  AND EMA9 < EMA21 AND Volume > 1.2× গড়
-```
+এটি একটি **Decision Support System** —  
+Manual execution ভিত্তিক।
 
-এই তিনটি নিয়ম সবচেয়ে গুরুত্বপূর্ণ। সহজ কিন্তু battle-tested।
+Core Philosophy:
 
-### ধাপ ২ — Smart Money Concept (SMC) Layer
-
-| Factor | মানে কী |
-|--------|---------|
-| **Market Structure** | বাজার কি Higher High/HL (Bullish) নাকি LH/LL (Bearish)? |
-| **Order Block** | বড় institution কোন price-এ buy/sell করেছিল? |
-| **Fair Value Gap (FVG)** | বাজারে কোনো imbalance zone আছে কি? |
-| **Premium/Discount Zone** | Price কি swing range-এর উপরে (Premium) নাকি নিচে (Discount)? |
-
-LONG-এ Discount zone + Bullish OB = strongest entry।
-SHORT-এ Premium zone + Bearish OB = strongest entry।
-
-### ধাপ ৩ — Smart Filters (৬টি context filter, ৪টি pass করতে হবে)
-
-| Filter | কী দেখে |
-|--------|---------|
-| 🕐 **Session** | Market কি active? Volume/volatility দিয়ে judge করে, clock দিয়ে নয় |
-| 📊 **Orderflow** | Bid/Ask pressure কি signal-এর দিকে? |
-| 💥 **Liquidation** | Price কি কোনো key level-এর কাছে? |
-| ₿ **BTC Trend** | Bitcoin কি signal-এর বিরুদ্ধে যাচ্ছে? |
-| 🔗 **Correlation** | Altcoin কি BTC থেকে independently move করছে? |
-| 📈 **Volatility** | ATR কি trade-এর জন্য যথেষ্ট? |
-
-### ধাপ ৪ — Signal Grade
-
-| Grade | মানে |
-|-------|------|
-| ⭐⭐⭐ **A+** | সব filter + ৩+ SMC factor → সেরা signal |
-| ⭐⭐ **A** | ৫+ filter + ২+ SMC → ভালো signal |
-| ⭐ **B** | ৪ filter pass → acceptable signal |
-| **C** | কোনোভাবে pass হয়েছে → caution নিন |
+- Capital First
+- Discipline Over Frequency
+- Regime-Controlled Execution
+- No Emotional Trading
 
 ---
 
-## 📱 Telegram Signal দেখতে কেমন?
+## 🧠 System Architecture
 
-```
-⚡ ARUNABHA SMART v10.0
+Execution Order (Non-Negotiable):
 
-🟢 LONG  ETH/USDT  [15m]  ⭐⭐⭐ A+
-
-┌─ ENTRY PLAN ──────────────────
-│ 📍 Entry      3421.5000
-│ 🛑 Stop Loss  3381.2000
-│ 🎯 TP         3521.8000
-│ 📐 R:R        2.49 : 1
-└──────────────────────────────────
-
-┌─ TECHNICALS ──────────────────
-│ RSI 32.4  EMA9 3418.20  EMA21 3405.60
-│ Volume 1.84× avg
-└──────────────────────────────────
-
-┌─ SMART MONEY (3/4) ────────
-│ Structure BULLISH
-│ Swing   Hi 3580.00  Lo 3350.00
-│ Equilib   3465.00
-│ Order Block 3415.00 — 3425.00
-│ FVG Zone    3398.00 — 3410.00
-└──────────────────────────────────
-
-┌─ CONTEXT FILTERS (5/6) ─
-│ 🕐✅  📊✅  💥✅  ₿✅  🔗✅  📈❌
-└──────────────────────────────────
-
-💼 Risk: 1.5%  ($15)  | Position: $2000  | 0.5851 contracts
-
-⏱ 17 Feb 2026  21:45 IST
-🚨 MANUAL EXECUTION — DO NOT AUTO-TRADE
-```
+1️⃣ BTC Regime Gatekeeper  
+2️⃣ Volatility Compression Check  
+3️⃣ Structure Confirmation (BOS / CHoCH Mandatory)  
+4️⃣ Score Validation  
+5️⃣ Risk Manager Approval  
+6️⃣ Signal Finalization  
 
 ---
 
-## 🤖 Telegram Commands
+## 📂 Core Modules
 
-| Command | কাজ |
-|---------|-----|
-| `/start` | Bot status দেখুন |
-| `/status` | আজকের signal count |
-| `/signals` | আজকের সব signals |
-
----
-
-## ⚙️ Configuration (config.py)
-
-| Setting | Default | মানে |
-|---------|---------|------|
-| `RSI_OVERSOLD` | 35 | LONG-এর RSI threshold |
-| `RSI_OVERBOUGHT` | 65 | SHORT-এর RSI threshold |
-| `ATR_SL_MULT` | 1.5× | Stop Loss = 1.5 × ATR |
-| `ATR_TP_MULT` | 2.5× | Take Profit = 2.5 × ATR |
-| `MIN_RR_RATIO` | 1.5 | Minimum risk:reward |
-| `MIN_FILTERS_PASS` | 4 | ৬টির মধ্যে কতটা pass করতে হবে |
-| `MAX_SIGNALS_DAY` | 6 | দিনে সর্বোচ্চ কতটা signal |
-| `LEVERAGE` | 15x | Display only, bot trade করে না |
-| `RISK_PCT_MIN/MAX` | 1–2% | Position size calculation |
+### 1️⃣ btc_regime_detector.py
+- Multi-timeframe EMA stack analysis
+- Market structure evaluation
+- Momentum & volatility scoring
+- Hard override logic
+- Confidence <45% → HARD BLOCK
+- Regime CHANGING → BLOCK
 
 ---
 
-## 🚀 Deploy on Railway
-
-### Environment Variables
-
-```bash
-TELEGRAM_BOT_TOKEN=your_token
-TELEGRAM_CHAT_ID=your_chat_id
-WEBHOOK_URL=https://your-app.up.railway.app
-BINANCE_API_KEY=your_key
-BINANCE_SECRET=your_secret
-PRIMARY_EXCHANGE=binance
-ACCOUNT_SIZE_USD=1000
-SCAN_INTERVAL_SEC=300
-```
-
-### Steps
-1. GitHub-এ push করুন
-2. Railway → New Project → GitHub repo
-3. Variables set করুন
-4. Domain নিন → `WEBHOOK_URL` set করুন
-5. `/health` endpoint check করুন
+### 2️⃣ extreme_fear_engine.py
+- BOS / CHoCH candle close validation
+- Strict structure confirmation
+- Score discipline enforced
+- Choppy mode higher threshold
+- Weak structure → BLOCK
 
 ---
 
-## 🛡️ Anti-Overfitting Design
+### 3️⃣ risk_manager.py
+Institutional Capital Protection Layer:
 
-| ❌ নেই | ✅ আছে |
-|--------|--------|
-| Machine Learning | Fixed simple rules |
-| Daily retraining | Dynamic context only |
-| Hyper-optimized params | Time-tested thresholds |
-| Auto-execution | Human final decision |
-| Complex indicators | RSI + EMA + Volume |
-
----
-
-## 📈 কত marks দেব?
-
-**Current Bot: 7/10**
-
-| Area | Score | কারণ |
-|------|-------|------|
-| Core Signal Quality | 7/10 | RSI+EMA+Vol solid কিন্তু single-timeframe |
-| Anti-overfitting | 9/10 | No ML, fixed rules |
-| SMC Integration | 6/10 | Proxy SMC, real OB needs tick data |
-| Risk Management | 8/10 | Dynamic sizing, clear SL/TP |
-| Infrastructure | 9/10 | Railway, webhook, health check |
+- 2 Consecutive SL → Day Lock
+- -2% Daily Drawdown → Auto Halt
+- 1R → 70% Partial Exit
+- +0.5% Move → SL to Break-Even
+- ATR > 3% → Trade Block
+- ATR 2–3% → Position Reduce 50%
 
 ---
 
-## 🔮 আরো কী যোগ করলে ভালো হবে?
+### 4️⃣ smart_signal.py
+Strict Execution Order Enforcement:
 
-### Signal Quality বাড়াতে:
+Regime → Volatility → Structure → Score → Risk → Signal
 
-1. **Multi-timeframe Confirmation (MTF)**
-   - 1h structure + 15m entry + 5m trigger
-   - এটা সবচেয়ে বড় upgrade হবে
+No shortcut allowed.
 
-2. **Volume Profile (VPOC)**
-   - High Volume Node থেকে entry নিলে win rate বাড়ে
+---
 
-3. **Funding Rate Filter**
-   - Binance funding rate > 0.1% → SHORT avoid করুন
-   - ইতিমধ্যে `BinanceClient` এ method আছে
+## 🛡 Capital Protection Rules
 
-4. **ATR-adaptive RSI Thresholds**
-   - High volatility market-এ RSI <30, >70 use করুন
-   - Low volatility-তে <38, >62
+- Maximum Risk per Trade: config controlled
+- No trade without structure confirmation
+- No trade in unstable regime
+- No trade during extreme volatility
+- Overtrading prevention built-in
+- Daily lock system active
 
-5. **Open Interest Divergence**
-   - Price up + OI down = fake breakout
-   - Price down + OI up = real downtrend
+---
 
-6. **Backtesting Module**
-   - Historical signal validation
-   - Win rate tracking per pair
+## ⚙️ Configuration Required
+
+Ensure `config.py` contains:
+
+- MIN_RR_RATIO
+- ATR_SL_MULT
+- ATR_TP_MULT
+- RISK_PCT
+- LEVERAGE
+- MAX_SIGNALS_DAY
+- MAX_CONCURRENT
+- ENTRY_CONFIRMATION_WAIT
+
+---
+
+## 🚀 How It Works
+
+1. BTC regime analyzed first (Gatekeeper)
+2. Market volatility checked
+3. Structure validated strictly
+4. Score calculated and graded
+5. Risk manager approves
+6. Telegram signal sent
+
+⚠️ Exchange order is NOT placed automatically.
+
+Manual execution required.
+
+---
+
+## 📊 Expected Behavior
+
+### Strong Trend Day
+- 3–6 High quality signals
+- 60–70% win probability zone
+- Controlled drawdown
+
+### Choppy Day
+- 0–3 signals
+- Strict filtering
+- Reduced position size
+
+### Extreme Volatility
+- Mostly blocked
+- Capital preserved
+
+---
+
+## ❌ What This Bot Does NOT Do
+
+- Does not auto-trade
+- Does not chase breakouts blindly
+- Does not ignore regime conditions
+- Does not allow revenge trading
+- Does not allow unlimited losses
+
+---
+
+## 🔒 Safety Features
+
+- Hard regime override
+- Strict structure validation
+- Volatility compression
+- Consecutive SL lock
+- Daily drawdown halt
+- Break-even auto management
+- Partial profit locking
+
+---
+
+## 🎯 Objective
+
+Create a disciplined institutional-style trading engine  
+that survives long-term and protects capital  
+instead of gambling for short-term gains.
 
 ---
 
 ## ⚠️ Disclaimer
 
-এই bot শুধু educational purpose-এ তৈরি। Crypto trading-এ capital loss হতে পারে। Bot-এর signal manual review করুন, auto-execute করবেন না।
+This system is for educational and decision-support purposes only.  
+Trading involves risk.  
+User is responsible for all execution decisions.
 
 ---
 
-*ARUNABHA SMART v10.0 — Built with ❤️ for disciplined trading*
+## 👤 Author
+
+ARUNABHA – Hybrid Manual Trader  
+System Version: 3.0 (Surgical Execution Engine)
+
+---
+
+🔥 Trade Less. Trade Smart. Protect Capital.
