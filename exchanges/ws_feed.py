@@ -1,20 +1,19 @@
 """
 ws_feed.py - ARUNABHA EXTREME FEAR BOT
-Simplified WebSocket feed - Compatible with new config
+WebSocket feed - Compatible with on_candle_close callback
 """
 
 import asyncio
 import json
 import logging
 from collections import deque
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Coroutine, Dict, List, Optional, Tuple
 
 import aiohttp
 import config
 
 logger = logging.getLogger(__name__)
 
-# Use TIMEFRAMES from config (now available)
 _TIMEFRAMES = config.TIMEFRAMES
 _CACHE_SIZE = 100
 
@@ -50,14 +49,14 @@ class _StreamRegistry:
 
 class BinanceWSFeed:
     """
-    Simplified WebSocket feed for 15m candles
+    WebSocket feed with on_candle_close callback
     """
     
     def __init__(
         self,
-        on_candle: Optional[Callable[[str, str, List[List[float]]], None]] = None
+        on_candle_close: Optional[Callable[[str, str, List[List[float]]], Coroutine]] = None
     ):
-        self.on_candle = on_candle
+        self.on_candle_close = on_candle_close  # 🆕 CORRECT parameter name
         self._registry = _StreamRegistry(config.TRADING_PAIRS, _TIMEFRAMES)
         
         # Cache: (symbol, tf) -> deque of candles
@@ -69,11 +68,6 @@ class BinanceWSFeed:
         
         self._task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
-        self._exchange = None  # Set by exchange_manager
-    
-    def set_exchange(self, exchange):
-        """Attach exchange manager"""
-        self._exchange = exchange
     
     def get_ohlcv(self, symbol: str, tf: str) -> List[List[float]]:
         """Get cached OHLCV"""
@@ -184,9 +178,9 @@ class BinanceWSFeed:
             self._cache[key].append(candle)
             logger.debug(f"Closed candle: {symbol} {tf} @ {candle[4]}")
             
-            # Trigger callback
-            if self.on_candle:
+            # 🆕 FIXED: Call on_candle_close with correct signature
+            if self.on_candle_close:
                 try:
-                    await self.on_candle(symbol, tf, list(self._cache[key]))
+                    await self.on_candle_close(symbol, tf, list(self._cache[key]))
                 except Exception as exc:
                     logger.error(f"Callback error: {exc}")
