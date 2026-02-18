@@ -1,6 +1,6 @@
 """
-ARUNABHA SMART SIGNAL v2.0
-Entry confirmation delay + strict filters
+ARUNABHA SMART SIGNAL v2.1
+With BTC multi-timeframe data
 """
 
 import logging
@@ -34,12 +34,11 @@ class SignalResult:
     session_info: str
     human_insight: str
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
-    # 🆕 Entry confirmation
     confirmation_pending: bool = False
     confirmation_price: float = 0.0
 
 
-# 🆕 Global pending signals for entry confirmation
+# Global pending signals for entry confirmation
 _pending_confirmations: Dict[str, Dict] = {}
 
 
@@ -49,6 +48,8 @@ def generate_signal(
     ohlcv_5m: List[List[float]],
     ohlcv_1h: List[List[float]],
     btc_ohlcv_15m: List[List[float]],
+    btc_ohlcv_1h: List[List[float]],      # 🆕 New
+    btc_ohlcv_4h: List[List[float]],      # 🆕 New
     funding_rate: float,
     fear_index: int,
     account_size: float,
@@ -67,7 +68,7 @@ def generate_signal(
     logger.info("🔍 SCAN START: %s", symbol)
     logger.info("=" * 60)
     
-    # 🆕 Check for pending confirmation
+    # Check for pending confirmation
     if symbol in _pending_confirmations:
         return _check_confirmation(
             symbol, ohlcv_15m, risk_manager, filters
@@ -111,7 +112,6 @@ def generate_signal(
     logger.info("   EMA200: %s | Structure: %s", 
                engine_result["ema200_passed"], engine_result["structure_passed"])
     
-    # 🆕 STRICT: Must pass EMA200 and Structure
     if not engine_result["ema200_passed"]:
         logger.warning("❌ BLOCK: EMA200 not confirmed (MANDATORY)")
         return None
@@ -129,7 +129,7 @@ def generate_signal(
     
     # ─── STEP 4: Determine Direction ────────────────────────
     logger.info("[STEP 4] Determine Direction...")
-    direction = engine_result["direction"]  # From structure shift
+    direction = engine_result["direction"]
     logger.info("   Direction: %s (from structure)", direction)
     
     # ─── STEP 5: Simple Filters (8 filters) ─────────────────
@@ -139,18 +139,18 @@ def generate_signal(
         ohlcv_15m=ohlcv_15m,
         ohlcv_1h=ohlcv_1h,
         btc_ohlcv_15m=btc_ohlcv_15m,
+        btc_ohlcv_1h=btc_ohlcv_1h,      # 🆕 Pass new data
+        btc_ohlcv_4h=btc_ohlcv_4h,      # 🆕 Pass new data
         funding_rate=funding_rate,
         symbol=symbol,
         ema200_passed=engine_result["ema200_passed"],
         structure_passed=engine_result["structure_passed"]
     )
     
-    # 🆕 STRICT: Must pass mandatory filters
     if not mandatory_pass:
-        logger.warning("❌ BLOCK: Mandatory filters failed (Session/EMA200/Structure)")
+        logger.warning("❌ BLOCK: Mandatory filters failed (Session/BTC/EMA200/Structure)")
         return None
     
-    # Log each filter
     for name, detail in filter_details.items():
         status = "✅" if detail["pass"] else "❌"
         logger.info("   %s %s: %s", status, name, detail["msg"])
@@ -180,12 +180,11 @@ def generate_signal(
         return None
     logger.info("✅ PASS: RR OK")
     
-    # 🆕 STEP 7: Entry Confirmation Delay ────────────────────
+    # ─── STEP 7: Entry Confirmation Delay ────────────────────
     if config.ENTRY_CONFIRMATION_WAIT:
         logger.info("[STEP 7] ⏳ ENTRY CONFIRMATION PENDING...")
         logger.info("   Waiting for next candle close above entry zone")
         
-        # Store pending signal
         _pending_confirmations[symbol] = {
             "direction": direction,
             "entry_zone": current_price,
@@ -201,7 +200,6 @@ def generate_signal(
             "candle_count": 0
         }
         
-        # Return pending signal (not executable yet)
         return SignalResult(
             symbol=symbol,
             direction=direction,
@@ -221,7 +219,6 @@ def generate_signal(
             confirmation_price=current_price
         )
     
-    # ─── STEP 8: Position Sizing ────────────────────────────
     return _finalize_signal(
         symbol, direction, current_price, sl_tp, engine_result, 
         filters_passed, mood_data, risk_manager, filters, account_size, mood
@@ -230,7 +227,7 @@ def generate_signal(
 
 def _check_confirmation(symbol: str, ohlcv: List[List[float]], 
                        risk_manager: RiskManager, filters: SimpleFilters) -> Optional[SignalResult]:
-    """🆕 Check if entry confirmation criteria met"""
+    """Check if entry confirmation criteria met"""
     global _pending_confirmations
     
     pending = _pending_confirmations.get(symbol)
@@ -238,7 +235,6 @@ def _check_confirmation(symbol: str, ohlcv: List[List[float]],
         return None
     
     current_price = ohlcv[-1][4]
-    prev_close = ohlcv[-2][4] if len(ohlcv) > 1 else current_price
     direction = pending["direction"]
     entry_zone = pending["entry_zone"]
     
@@ -246,35 +242,27 @@ def _check_confirmation(symbol: str, ohlcv: List[List[float]],
     
     logger.info("[CONFIRMATION CHECK] %s - Candle #%d", symbol, pending["candle_count"])
     
-    # 🆕 Confirmation criteria:
-    # 1. Next candle closed in direction of trade
-    # 2. Small higher low formed (for LONG) or lower high (for SHORT)
-    
     confirmed = False
     
     if direction == "LONG":
-        # Bullish close above entry zone
-        bullish_close = current_price > entry_zone * 1.001  # 0.1% above
-        higher_low = ohlcv[-1][3] > ohlcv[-2][3] if len(ohlcv) > 1 else False  # Low is higher
+        bullish_close = current_price > entry_zone * 1.001
+        higher_low = ohlcv[-1][3] > ohlcv[-2][3] if len(ohlcv) > 1 else False
         confirmed = bullish_close and higher_low
         
         logger.info("   Price: %.2f vs Entry: %.2f | Bullish: %s | Higher Low: %s",
                    current_price, entry_zone, bullish_close, higher_low)
-    else:  # SHORT
-        # Bearish close below entry zone
-        bearish_close = current_price < entry_zone * 0.999  # 0.1% below
-        lower_high = ohlcv[-1][2] < ohlcv[-2][2] if len(ohlcv) > 1 else False  # High is lower
+    else:
+        bearish_close = current_price < entry_zone * 0.999
+        lower_high = ohlcv[-1][2] < ohlcv[-2][2] if len(ohlcv) > 1 else False
         confirmed = bearish_close and lower_high
         
         logger.info("   Price: %.2f vs Entry: %.2f | Bearish: %s | Lower High: %s",
                    current_price, entry_zone, bearish_close, lower_high)
     
-    # Max 3 candles wait
     if confirmed:
         logger.info("✅ CONFIRMED: Entry criteria met after %d candles", pending["candle_count"])
         del _pending_confirmations[symbol]
         
-        # Recalculate SL/TP with new price
         atr = _calculate_atr(ohlcv)
         sl_tp = risk_manager.calculate_sl_tp(direction, current_price, atr)
         
@@ -355,9 +343,9 @@ def _build_insight(mood: Dict, engine: Dict, filters: int, direction: str) -> st
     lines.append(f"🔍 Filters: {filters}/8 passed")
     
     if direction == "LONG":
-        lines.append("🟢 LONG: EMA200 + Structure confirmed")
+        lines.append("🟢 LONG: EMA200 + Structure + BTC Bull confirmed")
     else:
-        lines.append("🔴 SHORT: Breakdown confirmed")
+        lines.append("🔴 SHORT: EMA200 + Structure + BTC Bear confirmed")
     
     return " | ".join(lines)
 
