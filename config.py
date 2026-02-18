@@ -20,7 +20,8 @@ COINDCX_SECRET = os.getenv("COINDCX_SECRET", "")
 PRIMARY_EXCHANGE = os.getenv("PRIMARY_EXCHANGE", "binance")
 
 # ─── Trading Universe ─────────────────────────────────
-TRADING_PAIRS: List[str] = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+TRADING_PAIRS = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "LINK/USDT", "ADA/USDT"]
+
 
 # ─── Timeframes ───────────────────────────────────────
 # 🆕 FIXED: ws_feed.py needs this
