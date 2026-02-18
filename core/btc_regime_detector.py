@@ -1,6 +1,6 @@
 """
-ARUNABHA BTC REGIME DETECTOR v1.0
-Multi-timeframe trend + structure + momentum
+ARUNABHA BTC REGIME DETECTOR v2.0
+Production-grade fixes for all 4 issues
 """
 
 import logging
@@ -25,25 +25,90 @@ class RegimeAnalysis:
     confidence: int
     direction: str
     strength: str
+    consistency: str  # 🆕 Added
     details: Dict
 
 
 class BTCRegimeDetector:
     """
-    4-layer BTC analysis:
-    1. EMA Structure (Trend)
-    2. Market Structure (HH/HL or LH/LL)
-    3. Momentum (RSI + Volume)
-    4. Volatility Regime (ATR)
+    4-layer BTC analysis with proper EMA, confidence enforcement, 
+    consistency checks, and balanced volatility scoring.
     """
     
     def __init__(self):
         self.regime_history: List[BTCRegime] = []
         self.max_history = 10
+        self._last_analysis: Optional[RegimeAnalysis] = None  # 🆕 Cache last analysis
+    
+    # ═══════════════════════════════════════════════════════════
+    # 🆕 ISSUE 1 FIX: Proper EMA200 Calculation
+    # ═══════════════════════════════════════════════════════════
+    
+    def _calculate_ema(self, values: List[float], period: int) -> float:
+        """
+        Proper Exponential Moving Average calculation.
+        
+        Formula: EMA_t = (Price_t * k) + (EMA_{t-1} * (1-k))
+        where k = 2 / (period + 1)
+        """
+        if len(values) < period:
+            # Fallback to SMA if insufficient data
+            return sum(values) / len(values)
+        
+        k = 2.0 / (period + 1)
+        
+        # Initialize with SMA of first 'period' values
+        ema = sum(values[:period]) / period
+        
+        # Calculate EMA for rest of values
+        for price in values[period:]:
+            ema = (price * k) + (ema * (1 - k))
+        
+        return ema
+    
+    def _get_ema_signals(self, ohlcv: List, name: str) -> Dict:
+        """Calculate proper EMA9, EMA21, EMA200 signals."""
+        if len(ohlcv) < 200:  # 🆕 Need 200 candles minimum for true EMA200
+            return {"valid": False, "reason": f"Need 200 candles, got {len(ohlcv)}"}
+        
+        closes = [c[4] for c in ohlcv]
+        
+        # 🆕 Proper EMA calculations
+        ema9 = self._calculate_ema(closes, 9)
+        ema21 = self._calculate_ema(closes, 21)
+        ema200 = self._calculate_ema(closes, 200)  # 🆕 True EMA200
+        
+        price = closes[-1]
+        
+        # Trend alignment checks
+        bullish_stack = ema9 > ema21 > ema200
+        bearish_stack = ema9 < ema21 < ema200
+        
+        # Distance from EMA200 (trend strength)
+        dist_200_pct = ((price - ema200) / ema200) * 100
+        
+        return {
+            "valid": True,
+            "ema9": ema9,
+            "ema21": ema21,
+            "ema200": ema200,  # 🆕 Now true EMA200
+            "price": price,
+            "bullish_stack": bullish_stack,
+            "bearish_stack": bearish_stack,
+            "dist_200_pct": dist_200_pct,
+            "alignment_score": 15 if bullish_stack else -15 if bearish_stack else 0
+        }
+    
+    # ═══════════════════════════════════════════════════════════
+    # MAIN ANALYSIS
+    # ═══════════════════════════════════════════════════════════
     
     def analyze(self, ohlcv_15m: List[List[float]], 
                 ohlcv_1h: List[List[float]],
                 ohlcv_4h: List[List[float]]) -> RegimeAnalysis:
+        """
+        Full multi-timeframe analysis with all fixes.
+        """
         
         # Layer 1: EMA Structure (Weight: 40%)
         ema_score, ema_details = self._analyze_ema_structure(ohlcv_15m, ohlcv_1h, ohlcv_4h)
@@ -54,8 +119,8 @@ class BTCRegimeDetector:
         # Layer 3: Momentum (Weight: 20%)
         momentum_score, momentum_details = self._analyze_momentum(ohlcv_15m, ohlcv_1h)
         
-        # Layer 4: Volatility (Weight: 10%)
-        vol_score, vol_details = self._analyze_volatility(ohlcv_15m)
+        # 🆕 ISSUE 4 FIX: Balanced Volatility Scoring
+        vol_score, vol_details = self._analyze_volatility_fixed(ohlcv_15m)
         
         # Calculate weighted score (-100 to +100)
         total_score = (
@@ -66,82 +131,71 @@ class BTCRegimeDetector:
         )
         
         # Determine regime
-        regime, confidence = self._classify_regime(total_score, ema_details, structure_details)
+        regime, confidence = self._classify_regime(total_score)
         
         # Direction and strength
         direction = "UP" if total_score > 10 else "DOWN" if total_score < -10 else "SIDEWAYS"
         strength = self._calculate_strength(abs(total_score))
+        
+        # 🆕 ISSUE 3 FIX: Consistency check
+        consistency = self._check_consistency()
         
         # Store history
         self.regime_history.append(regime)
         if len(self.regime_history) > self.max_history:
             self.regime_history.pop(0)
         
-        return RegimeAnalysis(
+        analysis = RegimeAnalysis(
             regime=regime,
             confidence=confidence,
             direction=direction,
             strength=strength,
+            consistency=consistency,  # 🆕 Added
             details={
                 "total_score": round(total_score, 1),
                 "ema": ema_details,
                 "structure": structure_details,
                 "momentum": momentum_details,
                 "volatility": vol_details,
-                "regime_consistency": self._check_consistency()
             }
         )
+        
+        # 🆕 Cache for should_trade_alt
+        self._last_analysis = analysis
+        
+        return analysis
     
     def _analyze_ema_structure(self, tf15: List, tf1h: List, tf4h: List) -> Tuple[int, Dict]:
+        """Multi-timeframe EMA with proper EMA200."""
         score = 0
         details = {}
         
-        def get_ema_signals(ohlcv: List, name: str) -> Dict:
-            if len(ohlcv) < 50:
-                return {"valid": False}
-            
-            closes = [c[4] for c in ohlcv]
-            ema9 = sum(closes[-9:]) / 9
-            ema21 = sum(closes[-21:]) / 21
-            ema200 = sum(closes[-50:]) / 50
-            
-            price = closes[-1]
-            
-            bullish_stack = ema9 > ema21 > ema200
-            bearish_stack = ema9 < ema21 < ema200
-            
-            return {
-                "valid": True,
-                "bullish_stack": bullish_stack,
-                "bearish_stack": bearish_stack,
-                "alignment_score": 15 if bullish_stack else -15 if bearish_stack else 0
-            }
-        
         tfs = {
-            "15m": get_ema_signals(tf15, "15m"),
-            "1h": get_ema_signals(tf1h, "1h"),
-            "4h": get_ema_signals(tf4h, "4h")
+            "15m": self._get_ema_signals(tf15, "15m"),
+            "1h": self._get_ema_signals(tf1h, "1h"),
+            "4h": self._get_ema_signals(tf4h, "4h")
         }
         
-        valid_tfs = [v for v in tfs.values() if v["valid"]]
+        valid_tfs = {k: v for k, v in tfs.items() if v.get("valid")}
         
-        if tfs["4h"]["valid"]:
-            score += tfs["4h"]["alignment_score"] * 1.5
-            details["4h"] = "Bull" if tfs["4h"]["bullish_stack"] else "Bear" if tfs["4h"]["bearish_stack"] else "Mixed"
-            
-        if tfs["1h"]["valid"]:
-            score += tfs["1h"]["alignment_score"] * 1.0
-            details["1h"] = "Bull" if tfs["1h"]["bullish_stack"] else "Bear" if tfs["1h"]["bearish_stack"] else "Mixed"
-            
-        if tfs["15m"]["valid"]:
-            score += tfs["15m"]["alignment_score"] * 0.5
-            details["15m"] = "Bull" if tfs["15m"]["bullish_stack"] else "Bear" if tfs["15m"]["bearish_stack"] else "Mixed"
+        if not valid_tfs:
+            return 0, {"error": "No valid EMA data", "details": tfs}
+        
+        # Higher timeframe gets more weight
+        weights = {"4h": 1.5, "1h": 1.0, "15m": 0.5}
+        
+        for tf_name, tf_data in valid_tfs.items():
+            score += tf_data["alignment_score"] * weights[tf_name]
+            details[tf_name] = {
+                "stack": "BULL" if tf_data["bullish_stack"] else "BEAR" if tf_data["bearish_stack"] else "MIXED",
+                "dist_200": round(tf_data["dist_200_pct"], 2)
+            }
         
         # Full alignment bonus
-        if all(t.get("bullish_stack") for t in valid_tfs):
+        if all(t.get("bullish_stack") for t in valid_tfs.values()):
             score += 10
             details["alignment"] = "FULL_BULL"
-        elif all(t.get("bearish_stack") for t in valid_tfs):
+        elif all(t.get("bearish_stack") for t in valid_tfs.values()):
             score -= 10
             details["alignment"] = "FULL_BEAR"
         else:
@@ -151,8 +205,9 @@ class BTCRegimeDetector:
         return score, details
     
     def _analyze_market_structure(self, ohlcv_4h: List) -> Tuple[int, Dict]:
+        """Detect HH/HL or LH/LL patterns."""
         if len(ohlcv_4h) < 30:
-            return 0, {"error": "No data"}
+            return 0, {"error": "Insufficient data"}
         
         highs = [c[2] for c in ohlcv_4h[-30:]]
         lows = [c[3] for c in ohlcv_4h[-30:]]
@@ -168,7 +223,7 @@ class BTCRegimeDetector:
                 swing_lows.append((i, lows[i]))
         
         if len(swing_highs) < 2 or len(swing_lows) < 2:
-            return 0, {"structure": "UNCLEAR"}
+            return 0, {"structure": "UNCLEAR", "swings": f"HH:{len(swing_highs)}, LL:{len(swing_lows)}"}
         
         recent_hh = [h for _, h in swing_highs[-3:]]
         recent_ll = [l for _, l in swing_lows[-3:]]
@@ -178,10 +233,7 @@ class BTCRegimeDetector:
         lh_pattern = recent_hh[-1] < recent_hh[0] if len(recent_hh) >= 2 else False
         ll_pattern = recent_ll[-1] < recent_ll[0] if len(recent_ll) >= 2 else False
         
-        details = {
-            "recent_hh": recent_hh[-1] if recent_hh else None,
-            "recent_ll": recent_ll[-1] if recent_ll else None,
-        }
+        details = {"recent_hh": recent_hh[-1], "recent_ll": recent_ll[-1]}
         
         if hh_pattern and hl_pattern:
             score = 35
@@ -202,6 +254,7 @@ class BTCRegimeDetector:
         return score, details
     
     def _analyze_momentum(self, tf15: List, tf1h: List) -> Tuple[int, Dict]:
+        """RSI + Volume momentum."""
         details = {}
         
         # 15m RSI
@@ -236,10 +289,22 @@ class BTCRegimeDetector:
         
         return total_score, details
     
-    def _analyze_volatility(self, ohlcv: List) -> Tuple[int, Dict]:
+    # ═══════════════════════════════════════════════════════════
+    # 🆕 ISSUE 4 FIX: Balanced Volatility Scoring
+    # ═══════════════════════════════════════════════════════════
+    
+    def _analyze_volatility_fixed(self, ohlcv: List) -> Tuple[int, Dict]:
+        """
+        Balanced ATR scoring:
+        - Low volatility: neutral (0)
+        - Normal: positive (+10)
+        - Elevated: small positive (+5)
+        - Extreme: negative (-5 to -10)
+        """
         if len(ohlcv) < 14:
             return 0, {"error": "No data"}
         
+        # Calculate ATR
         trs = []
         for i in range(1, len(ohlcv)):
             high = ohlcv[i][2]
@@ -254,22 +319,30 @@ class BTCRegimeDetector:
         
         details = {"atr_pct": round(atr_pct, 2)}
         
-        if 0.3 <= atr_pct <= 2.0:
+        # 🆕 Balanced scoring (FIXED)
+        if 0.5 <= atr_pct <= 1.5:  # Normal volatility
             score = 10
             details["regime"] = "NORMAL"
-        elif atr_pct < 0.3:
-            score = -10
-            details["regime"] = "LOW_VOL"
-        elif atr_pct > 3.0:
-            score = -5
-            details["regime"] = "HIGH_VOL"
-        else:
+        elif 1.5 < atr_pct <= 2.5:  # Elevated but acceptable
             score = 5
             details["regime"] = "ELEVATED"
+        elif atr_pct < 0.3:  # Too quiet - neutral (not negative)
+            score = 0
+            details["regime"] = "LOW_VOL"
+        elif 0.3 <= atr_pct < 0.5:  # Low but tradeable
+            score = 3
+            details["regime"] = "LOW_ACCEPTABLE"
+        elif 2.5 < atr_pct <= 3.5:  # High volatility
+            score = -5
+            details["regime"] = "HIGH_VOL"
+        else:  # > 3.5% Extreme volatility
+            score = -10
+            details["regime"] = "EXTREME_VOL"
         
         return score, details
     
-    def _classify_regime(self, total_score: float, ema_details: Dict, structure_details: Dict) -> Tuple[BTCRegime, int]:
+    def _classify_regime(self, total_score: float) -> Tuple[BTCRegime, int]:
+        """Classify regime and calculate confidence."""
         abs_score = abs(total_score)
         confidence = min(100, int(abs_score * 1.5))
         
@@ -293,6 +366,7 @@ class BTCRegimeDetector:
             return "WEAK"
     
     def _check_consistency(self) -> str:
+        """🆕 ISSUE 3: Check regime consistency."""
         if len(self.regime_history) < 3:
             return "INSUFFICIENT_DATA"
         
@@ -305,6 +379,7 @@ class BTCRegimeDetector:
             return "CHANGING"
     
     def _calculate_rsi(self, closes: List[float], period: int = 14) -> float:
+        """Standard RSI calculation."""
         if len(closes) < period + 1:
             return 50.0
         
@@ -323,22 +398,61 @@ class BTCRegimeDetector:
             return 100.0
         return 100 - (100 / (1 + avg_gain / avg_loss))
     
+    # ═══════════════════════════════════════════════════════════
+    # 🆕 ISSUE 2 & 3 FIX: Proper Confidence & Consistency Enforcement
+    # ═══════════════════════════════════════════════════════════
+    
     def should_trade_alt(self, alt_direction: str, min_confidence: int = 60) -> Tuple[bool, str]:
-        if not self.regime_history:
-            return False, "No regime data"
+        """
+        Enhanced trade decision with:
+        - Confidence threshold enforcement
+        - Regime consistency check
+        - Clear rejection reasons
+        """
+        # Need recent analysis
+        if not self._last_analysis:
+            return False, "No analysis available"
         
-        current = self.regime_history[-1]
+        analysis = self._last_analysis
         
-        if current == BTCRegime.STRONG_BULL:
-            return alt_direction == "LONG", "BTC Strong Bull"
-        elif current == BTCRegime.BULL:
-            return alt_direction == "LONG", "BTC Bull"
-        elif current == BTCRegime.STRONG_BEAR:
-            return alt_direction == "SHORT", "BTC Strong Bear"
-        elif current == BTCRegime.BEAR:
-            return alt_direction == "SHORT", "BTC Bear"
-        else:
-            return False, "BTC Choppy - No trade"
+        # 🆕 ISSUE 2 FIX: Check confidence threshold
+        if analysis.confidence < min_confidence:
+            return False, f"Confidence {analysis.confidence}% < required {min_confidence}%"
+        
+        # 🆕 ISSUE 3 FIX: Check consistency
+        consistency = analysis.consistency
+        
+        if consistency == "CHANGING":
+            return False, f"Regime changing - too risky (was {self.regime_history[-2].value if len(self.regime_history) > 1 else 'unknown'})"
+        
+        # Optional: Allow weaker signals if stabilizing
+        allow_weaker = (consistency == "STABILIZING")
+        
+        # Regime-direction alignment
+        regime = analysis.regime
+        
+        if regime == BTCRegime.STRONG_BULL:
+            can_trade = alt_direction == "LONG"
+            reason = "BTC Strong Bull" + (" (stabilizing)" if allow_weaker else "")
+            return can_trade, reason
+            
+        elif regime == BTCRegime.BULL:
+            can_trade = alt_direction == "LONG"
+            reason = "BTC Bull" + (" (stabilizing)" if allow_weaker else "")
+            return can_trade, reason
+            
+        elif regime == BTCRegime.STRONG_BEAR:
+            can_trade = alt_direction == "SHORT"
+            reason = "BTC Strong Bear" + (" (stabilizing)" if allow_weaker else "")
+            return can_trade, reason
+            
+        elif regime == BTCRegime.BEAR:
+            can_trade = alt_direction == "SHORT"
+            reason = "BTC Bear" + (" (stabilizing)" if allow_weaker else "")
+            return can_trade, reason
+            
+        else:  # CHOPPY
+            return False, f"BTC Choppy (confidence: {analysis.confidence}%) - no directional edge"
 
 
 # Global instance
