@@ -1,6 +1,6 @@
 """
 ARUNABHA EXTREME FEAR BOT v1.0
-Main entry point
+Main entry point - FIXED parameter name
 """
 
 import asyncio
@@ -44,8 +44,8 @@ class ArunabhaBot:
         # Fetch initial fear index
         await self.mood.fetch_fear_index()
         
-        # Setup WebSocket
-        self.ws = BinanceWSFeed(on_candle=self.on_candle)
+        # 🆕 FIXED: Use on_candle_close (not on_candle)
+        self.ws = BinanceWSFeed(on_candle_close=self.on_candle_close)
         self.exchange.set_ws_feed(self.ws)
         
         # Seed data
@@ -71,10 +71,11 @@ class ArunabhaBot:
                 await self.mood.fetch_fear_index()
                 
             # Check trade timeouts
-            # (Implementation needed with price fetch)
+            # TODO: Implement price fetch for timeout check
             
-    async def on_candle(self, symbol: str, timeframe: str, ohlcv: list):
-        """Callback on new candle"""
+    # 🆕 FIXED: Method name matches ws_feed.py callback
+    async def on_candle_close(self, symbol: str, timeframe: str, ohlcv: list):
+        """Callback on candle close"""
         if timeframe != config.TIMEFRAME:
             return  # Only trade 15m
             
@@ -88,7 +89,7 @@ class ArunabhaBot:
             ohlcv_5m = await self.exchange.fetch_ohlcv(symbol, "5m", 50)
             ohlcv_1h = await self.exchange.fetch_ohlcv(symbol, "1h", 50)
             btc_15m = await self.exchange.fetch_ohlcv(config.TRADING_PAIRS[0], "15m", 50)
-            funding = 0  # Fetch from exchange if available
+            funding = 0  # TODO: Fetch funding rate
             
             # Generate signal
             signal = generate_signal(
@@ -99,7 +100,7 @@ class ArunabhaBot:
                 btc_ohlcv_15m=btc_15m,
                 funding_rate=funding,
                 fear_index=self.mood.fear_index,
-                account_size=1000,  # From config or env
+                account_size=1000,  # TODO: From config/env
                 risk_manager=self.risk,
                 filters=self.filters,
                 engine=self.engine,
