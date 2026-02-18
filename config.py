@@ -38,9 +38,9 @@ VOLUME_MULTIPLIER = 1.0  # Base volume enough
 
 # ─── Risk Management ────────────────────────────────────
 ATR_PERIOD = 14
-ATR_SL_MULT = 1.2
-ATR_TP_MULT = 2.5      # 2x = realistic target
-MIN_RR_RATIO = 1.8
+ATR_SL_MULT = 1.5
+ATR_TP_MULT = 3.0      # 2x = realistic target
+MIN_RR_RATIO = 2.0
 LEVERAGE = 15
 RISK_PCT = 1.5         # Fixed 1.5% risk per trade
 
