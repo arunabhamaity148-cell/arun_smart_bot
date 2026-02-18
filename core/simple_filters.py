@@ -1,6 +1,6 @@
 """
-ARUNABHA SIMPLE FILTERS v2.1
-Fixed BTC filter + Regime detection
+ARUNABHA SIMPLE FILTERS v2.2
+Updated to pass min_confidence to regime detector
 """
 
 import logging
@@ -20,6 +20,7 @@ class SimpleFilters:
     
     def __init__(self):
         self.cooldown_map = {}
+        self.btc_min_confidence = 60  # 🆕 Configurable threshold
         
     def evaluate(self,
                  direction: str,
@@ -45,7 +46,7 @@ class SimpleFilters:
             "msg": session_msg
         }
         
-        # 2. 🆕 ADVANCED BTC Regime Detection
+        # 2. 🆕 ADVANCED BTC Regime Detection with confidence
         btc_ok, btc_msg = self._check_btc_regime(direction, btc_ohlcv_15m, btc_ohlcv_1h, btc_ohlcv_4h)
         results["btc_trend"] = {
             "pass": btc_ok,
@@ -119,24 +120,29 @@ class SimpleFilters:
                           btc_1h: List, 
                           btc_4h: List) -> Tuple[bool, str]:
         """
-        🆕 ADVANCED: Use BTC Regime Detector
+        🆕 ADVANCED: Use BTC Regime Detector with confidence enforcement
         """
-        if not btc_15m or len(btc_15m) < 50:
-            return False, "No BTC data"
+        if not btc_15m or len(btc_15m) < 200:  # 🆕 Need 200 for true EMA200
+            return False, "No BTC data (need 200 candles)"
         
         # Analyze regime
         analysis = btc_detector.analyze(btc_15m, btc_1h, btc_4h)
         
-        # Check if we can trade this alt
-        can_trade, reason = btc_detector.should_trade_alt(direction, min_confidence=50)
+        # 🆕 Pass min_confidence from config or self
+        can_trade, reason = btc_detector.should_trade_alt(
+            direction, 
+            min_confidence=self.btc_min_confidence
+        )
         
+        # Build detailed message
         regime_name = analysis.regime.value.replace("_", " ").upper()
         confidence = analysis.confidence
+        consistency = analysis.consistency
         
         if can_trade:
-            return True, f"✅ BTC {regime_name} ({confidence}%) - {reason}"
+            return True, f"✅ BTC {regime_name} ({confidence}%, {consistency}) - {reason}"
         else:
-            return False, f"❌ BTC {regime_name} ({confidence}%) - {reason}"
+            return False, f"❌ BTC {regime_name} ({confidence}%, {consistency}) - {reason}"
     
     def _check_session_strict(self, ohlcv: List[List[float]]) -> Tuple[bool, str]:
         """Volume and volatility check"""
