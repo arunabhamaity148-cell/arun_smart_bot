@@ -1,3 +1,9 @@
-from .telegram_alerts import TelegramAlerts, format_signal_message, format_status_message
+"""
+Alert modules for ARUNABHA EXTREME FEAR BOT
+"""
 
-__all__ = ["TelegramAlerts", "format_signal_message", "format_status_message"]
+from .telegram_alerts import TelegramAlerts
+
+__all__ = [
+    "TelegramAlerts",
+]
