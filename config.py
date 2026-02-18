@@ -1,6 +1,6 @@
 """
-ARUNABHA EXTREME FEAR BOT v1.0
-Simplified config - Only essential settings
+ARUNABHA EXTREME FEAR BOT v2.0
+Updated config with strict filters
 """
 
 import os
@@ -22,60 +22,67 @@ PRIMARY_EXCHANGE = os.getenv("PRIMARY_EXCHANGE", "binance")
 # ─── Trading Universe ─────────────────────────────────
 TRADING_PAIRS = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "LINK/USDT", "ADA/USDT"]
 
-
 # ─── Timeframes ───────────────────────────────────────
-# 🆕 FIXED: ws_feed.py needs this
-TIMEFRAMES = ["5m", "15m", "1h"]  # WebSocket monitors all
-TIMEFRAME = "15m"  # Main trading timeframe
+TIMEFRAMES = ["5m", "15m", "1h"]
+TIMEFRAME = "15m"
 
 # ─── Core Signal Thresholds ───────────────────────────
 RSI_PERIOD = 14
-RSI_OVERSOLD = 38      # Relaxed for fear market
+RSI_OVERSOLD = 38
 RSI_OVERBOUGHT = 62
 EMA_FAST = 9
 EMA_SLOW = 21
-VOLUME_MULTIPLIER = 1.0  # Base volume enough
+EMA_TREND = 200  # 🆕 Mandatory EMA200
+VOLUME_MULTIPLIER = 1.0
 
 # ─── Risk Management ────────────────────────────────────
 ATR_PERIOD = 14
 ATR_SL_MULT = 1.8
-ATR_TP_MULT = 3.6      # 2x = realistic target
+ATR_TP_MULT = 3.6
 MIN_RR_RATIO = 2.0
 LEVERAGE = 15
-RISK_PCT = 1.5         # Fixed 1.5% risk per trade
+RISK_PCT = 1.5
 
 # ─── Extreme Fear Engine ────────────────────────────────
-EXTREME_FEAR_RSI = 30          # RSI < 30 = panic
-EXTREME_FEAR_VOLUME_MULT = 2.0  # 2x volume spike
-BEAR_TRAP_WICK_MULT = 2.0       # Lower wick 2x body
-LIQUIDITY_SWEEP_PCT = 0.3       # 0.3% break + reclaim
-FUNDING_EXTREME = -0.0005       # -0.05% funding
+EXTREME_FEAR_RSI = 30
+EXTREME_FEAR_VOLUME_MULT = 2.0
+BEAR_TRAP_WICK_MULT = 2.0
+LIQUIDITY_SWEEP_PCT = 0.3
+FUNDING_EXTREME = -0.0005
 
-# ─── Simple Filters (6 only) ───────────────────────────
+# 🆕 STRICT SETTINGS
+MIN_SCORE_TO_TRADE = 50  # Was 40
+REQUIRE_EMA200_CONFIRM = True  # 🆕 Mandatory
+REQUIRE_STRUCTURE_SHIFT = True  # 🆕 BOS/CHoCH required
+ENTRY_CONFIRMATION_WAIT = True  # 🆕 Wait for next candle
+
+# ─── Simple Filters ───────────────────────────────────
 FILTERS = {
-    "session_active": True,      # Volume/volatility check
-    "btc_trend_ok": True,        # No conflict with BTC
-    "mtf_confirm": True,         # 1h confirms 15m
-    "liquidity_zone": True,      # Near support/resistance
-    "funding_safe": True,        # Not extreme crowded
-    "cooldown_ok": True,         # 30 min per coin
+    "session_active": True,
+    "btc_trend_ok": True,
+    "mtf_confirm": True,
+    "liquidity_zone": True,
+    "funding_safe": True,
+    "cooldown_ok": True,
+    "ema200_confirm": True,  # 🆕 New
+    "structure_shift": True,  # 🆕 New
 }
-MIN_FILTERS_PASS = 4  # 4/6 = 67% enough
+MIN_FILTERS_PASS = 6  # 6/8 = 75% (was 4/6)
 
 # ─── Limits ────────────────────────────────────────────
-MAX_SIGNALS_DAY = 3      # Max 3 trades/day (fear market)
-MAX_CONCURRENT = 1       # Only 1 active trade
-COOLDOWN_MINUTES = 30    # Same coin 30 min wait
-FEAR_INDEX_STOP = 75     # >75 fear = stop trading
+MAX_SIGNALS_DAY = 3
+MAX_CONCURRENT = 1
+COOLDOWN_MINUTES = 30
+FEAR_INDEX_STOP = 75
 
 # ─── Session Times (IST) ──────────────────────────────
-LONDON_OPEN_IST = 13     # 13:30 IST
-NY_OPEN_IST = 18         # 18:00 IST
-ASIA_CLOSE_IST = 9       # 09:00 IST
+LONDON_OPEN_IST = 13
+NY_OPEN_IST = 18
+ASIA_CLOSE_IST = 9
 
 # ─── Bot Info ───────────────────────────────────────────
 BOT_NAME = "ARUNABHA EXTREME FEAR"
-BOT_VERSION = "v1.0"
+BOT_VERSION = "v2.0"
 
 # ─── Fear Index API ────────────────────────────────────
 FEAR_GREED_API_URL = "https://api.alternative.me/fng/?limit=1"
