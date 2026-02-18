@@ -228,4 +228,4 @@ def _calculate_atr(ohlcv: List[List[float]], period: int = 14) -> float:
     return sum(trs[-period:]) / period
 
 
-from datetime import datetime
+from datetime import datetime 
