@@ -297,24 +297,35 @@ def generate_signal(
     vol_ratio  = last_vol / avg_volume if avg_volume > 0 else 0.0
     entry      = float(closes[-1])
 
-    # ── CORE RULES — thresholds from regime ──────────────────────────────────
+    # ── CORE RULES — adaptive based on regime ────────────────────────────────
     rsi_ob  = regime_params.rsi_oversold
     rsi_os  = regime_params.rsi_overbought
     vol_min = regime_params.volume_multiplier
 
-    long_core  = rsi < rsi_ob  and ema_fast > ema_slow and vol_ratio >= vol_min
-    short_core = rsi > rsi_os  and ema_fast < ema_slow and vol_ratio >= vol_min
+    # EXTREME_FEAR → panic reversal logic (ignore EMA direction)
+    if regime_name == "EXTREME_FEAR":
+        # Panic capitulation — RSI extreme + volume spike = reversal
+        long_core  = rsi < rsi_ob  and vol_ratio >= vol_min
+        short_core = rsi > rsi_os  and vol_ratio >= vol_min
+        skip_reason = (
+            f"RSI={rsi:.1f} (need <{rsi_ob:.0f}/>{rsi_os:.0f}) | "
+            f"VolRatio={vol_ratio:.2f} (need >{vol_min:.1f}) | "
+            f"EMA check bypassed (panic mode)"
+        )
+    else:
+        # Normal TRENDING/RANGING — strict EMA alignment required
+        long_core  = rsi < rsi_ob  and ema_fast > ema_slow and vol_ratio >= vol_min
+        short_core = rsi > rsi_os  and ema_fast < ema_slow and vol_ratio >= vol_min
+        skip_reason = (
+            f"RSI={rsi:.1f} (need <{rsi_ob:.0f}/>{rsi_os:.0f}) | "
+            f"EMA9={ema_fast:.2f} {'>' if ema_fast > ema_slow else '<'} EMA21={ema_slow:.2f} | "
+            f"VolRatio={vol_ratio:.2f} (need >{vol_min:.1f})"
+        )
 
     if not long_core and not short_core:
         logger.info(
-            "⏭ SKIP %s [%s] [%s] — Core rules failed | "
-            "RSI=%.1f (need <%.0f/>%.0f) | "
-            "EMA9=%.2f %s EMA21=%.2f | "
-            "VolRatio=%.2f (need >%.1f)",
-            symbol, timeframe, regime_name,
-            rsi, rsi_ob, rsi_os,
-            ema_fast, ">" if ema_fast > ema_slow else "<", ema_slow,
-            vol_ratio, vol_min,
+            "⏭ SKIP %s [%s] [%s] — Core rules failed | %s",
+            symbol, timeframe, regime_name, skip_reason,
         )
         return None
 
