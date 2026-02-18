@@ -1,45 +1,87 @@
 """
-Time utilities – sleep detection, IST conversion, date helpers.
+Time utilities for ARUNABHA EXTREME FEAR BOT
+IST timezone, sleep detection, formatting
 """
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 
+# Timezones
 IST = timezone(timedelta(hours=5, minutes=30))
 UTC = timezone.utc
 
 
 def utcnow() -> datetime:
+    """Current UTC time"""
     return datetime.now(UTC)
 
 
 def ist_now() -> datetime:
+    """Current IST time"""
     return datetime.now(IST)
 
 
 def is_sleep_time() -> bool:
     """
-    Returns True during IST 1 AM – 7 AM (UTC 19:30 – 01:30).
-    No trading signals are generated during this window.
+    Check if sleep hours (IST 1 AM - 7 AM)
+    No trading during this time
     """
-    now_ist = ist_now()
-    h, m = now_ist.hour, now_ist.minute
-    # 01:00 – 06:59 IST = sleep
-    if 1 <= h < 7:
-        return True
-    return False
-
-
-def today_utc_str() -> str:
-    """YYYY-MM-DD string in UTC."""
-    return utcnow().strftime("%Y-%m-%d")
+    now = ist_now()
+    return 1 <= now.hour < 7
 
 
 def today_ist_str() -> str:
-    """YYYY-MM-DD string in IST."""
+    """Today date in IST (YYYY-MM-DD)"""
     return ist_now().strftime("%Y-%m-%d")
 
 
 def ts_label() -> str:
-    """Human-readable timestamp in IST for Telegram messages."""
-    return ist_now().strftime("%d %b %Y  %H:%M IST")
+    """Human readable timestamp for Telegram"""
+    return ist_now().strftime("%d %b %Y, %H:%M IST")
+
+
+def format_duration(minutes: int) -> str:
+    """Format minutes to readable string"""
+    if minutes < 60:
+        return f"{minutes}m"
+    hours = minutes // 60
+    mins = minutes % 60
+    if mins == 0:
+        return f"{hours}h"
+    return f"{hours}h {mins}m"
+
+
+def get_session_name() -> Optional[str]:
+    """
+    Get current trading session name
+    Returns: asia, london, ny, or None
+    """
+    hour = ist_now().hour
+    
+    if 6 <= hour < 12:
+        return "asia"
+    elif 13 <= hour < 17:
+        return "london"
+    elif 17 <= hour < 22:
+        return "ny"
+    
+    return None
+
+
+def is_major_session() -> bool:
+    """Check if London or NY is active"""
+    session = get_session_name()
+    return session in ["london", "ny"]
+
+
+def next_session_start() -> Optional[str]:
+    """Get next major session start time"""
+    hour = ist_now().hour
+    
+    if hour < 13:
+        return "13:30 IST (London)"
+    elif hour < 17:
+        return "18:00 IST (NY)"
+    
+    return "Tomorrow 13:30 IST"
