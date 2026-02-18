@@ -21,7 +21,11 @@ PRIMARY_EXCHANGE = os.getenv("PRIMARY_EXCHANGE", "binance")
 
 # ─── Trading Universe ─────────────────────────────────
 TRADING_PAIRS: List[str] = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
-TIMEFRAME = "15m"  # Fixed, no auto selection
+
+# ─── Timeframes ───────────────────────────────────────
+# 🆕 FIXED: ws_feed.py needs this
+TIMEFRAMES = ["5m", "15m", "1h"]  # WebSocket monitors all
+TIMEFRAME = "15m"  # Main trading timeframe
 
 # ─── Core Signal Thresholds ───────────────────────────
 RSI_PERIOD = 14
@@ -71,3 +75,6 @@ ASIA_CLOSE_IST = 9       # 09:00 IST
 # ─── Bot Info ───────────────────────────────────────────
 BOT_NAME = "ARUNABHA EXTREME FEAR"
 BOT_VERSION = "v1.0"
+
+# ─── Fear Index API ────────────────────────────────────
+FEAR_GREED_API_URL = "https://api.alternative.me/fng/?limit=1"
