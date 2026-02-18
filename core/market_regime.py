@@ -224,14 +224,23 @@ def detect_regime(
     }
 
     # ── 1. Extreme Fear check ──────────────────────────────────────────────
-    # Funding deeply negative AND RSI very low = panic capitulation
-    is_panic_long  = funding_rate <= -0.0005 and rsi < 30   # panic short squeeze setup
-    is_panic_short = funding_rate >=  0.0010 and rsi > 70   # extreme greed reversal
+    # Two paths to EXTREME_FEAR regime:
+    # A) Funding + RSI (original logic)
+    # B) Pure RSI panic (new) — RSI < 25 or > 75 alone = extreme
+    
+    funding_panic_long  = funding_rate <= -0.0005 and rsi < 30
+    funding_panic_short = funding_rate >=  0.0010 and rsi > 70
+    
+    pure_rsi_panic_long  = rsi < 25 and atr_pct > 0.6   # extreme RSI + volatility
+    pure_rsi_panic_short = rsi > 75 and atr_pct > 0.6
+    
+    is_panic = (funding_panic_long or funding_panic_short or 
+                pure_rsi_panic_long or pure_rsi_panic_short)
 
-    if is_panic_long or is_panic_short:
+    if is_panic:
         logger.info(
-            "🔴 Regime: EXTREME_FEAR | RSI=%.1f Funding=%.4f%% EMA_gap=%.3f%%",
-            rsi, funding_rate * 100, ema_gap_pct,
+            "😱 Regime: EXTREME_FEAR | RSI=%.1f Funding=%.4f%% ATR=%.3f%% (panic mode)",
+            rsi, funding_rate * 100, atr_pct,
         )
         return REGIME_FEAR, PARAMS_FEAR, debug
 
