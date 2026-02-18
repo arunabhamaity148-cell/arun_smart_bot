@@ -1,6 +1,6 @@
 """
 ARUNABHA EXTREME FEAR BOT v1.0
-Main entry point - FIXED parameter name
+Main entry point - FIXED on_candle_close parameter
 """
 
 import asyncio
@@ -70,14 +70,11 @@ class ArunabhaBot:
             if datetime.now().minute % 5 == 0:
                 await self.mood.fetch_fear_index()
                 
-            # Check trade timeouts
-            # TODO: Implement price fetch for timeout check
-            
-    # 🆕 FIXED: Method name matches ws_feed.py callback
+    # 🆕 FIXED: Method name on_candle_close
     async def on_candle_close(self, symbol: str, timeframe: str, ohlcv: list):
         """Callback on candle close"""
         if timeframe != config.TIMEFRAME:
-            return  # Only trade 15m
+            return
             
         # Check daily reset
         current_date = datetime.now().strftime("%Y-%m-%d")
@@ -89,7 +86,7 @@ class ArunabhaBot:
             ohlcv_5m = await self.exchange.fetch_ohlcv(symbol, "5m", 50)
             ohlcv_1h = await self.exchange.fetch_ohlcv(symbol, "1h", 50)
             btc_15m = await self.exchange.fetch_ohlcv(config.TRADING_PAIRS[0], "15m", 50)
-            funding = 0  # TODO: Fetch funding rate
+            funding = 0
             
             # Generate signal
             signal = generate_signal(
@@ -100,7 +97,7 @@ class ArunabhaBot:
                 btc_ohlcv_15m=btc_15m,
                 funding_rate=funding,
                 fear_index=self.mood.fear_index,
-                account_size=1000,  # TODO: From config/env
+                account_size=1000,
                 risk_manager=self.risk,
                 filters=self.filters,
                 engine=self.engine,
