@@ -1,6 +1,6 @@
 """
-ARUNABHA BTC REGIME DETECTOR v3.1
-Balanced institutional-grade with tiered confidence system
+ARUNABHA BTC REGIME DETECTOR v3.3
+Full institutional-grade with true ADX smoothing
 """
 
 import logging
@@ -30,38 +30,39 @@ class RegimeAnalysis:
     can_trade: bool
     trade_mode: str
     block_reason: Optional[str]
-    tier_requirement: str  # 🆕 Tier level needed
-    adx_threshold: float   # 🆕 ADX minimum required
+    tier_requirement: str
+    adx_threshold: float
     details: Dict
 
 
 class BTCRegimeDetector:
     """
-    Balanced institutional regime detection.
-    Tiered confidence system - not one-size-fits-all.
+    Full institutional regime detection.
+    True ADX smoothing for less jumpy regime detection.
     """
     
-    # 🆕 NEW THRESHOLDS (Balanced)
-    HARD_BLOCK_CONFIDENCE = 20      # Absolute minimum
-    CHOPPY_MIN_CONFIDENCE = 30      # Choppy needs 30%
-    TREND_MIN_CONFIDENCE = 30       # Trend needs 30%
+    HARD_BLOCK_CONFIDENCE = 20
+    CHOPPY_MIN_CONFIDENCE = 30
+    TREND_MIN_CONFIDENCE = 30
     
-    # 🆕 ADX Requirements
-    CHOPPY_ADX_MIN = 28             # Choppy needs strong ADX
-    TREND_ADX_MIN = 22              # Trend moderate ADX
+    CHOPPY_ADX_MIN = 28
+    TREND_ADX_MIN = 22
     
-    # 🆕 Tier Requirements
-    CHOPPY_TIER_MIN = 85            # Only elite in choppy
-    TREND_TIER_MIN = 70             # Tier 1 in trend
+    CHOPPY_TIER_MIN = 85
+    TREND_TIER_MIN = 70
+    
+    # 🆕 ADX smoothing history
+    ADX_HISTORY_SIZE = 5  # Keep last 5 ADX values for smoothing
     
     def __init__(self):
         self.regime_history: List[BTCRegime] = []
         self.max_history = 10
         self._last_analysis: Optional[RegimeAnalysis] = None
-        self._skip_next_cycle = False  # 🆕 For CHANGING regime
+        self._skip_next_cycle = False
+        # 🆕 ADX smoothing buffer
+        self._adx_history: List[float] = []
     
     def _calculate_ema(self, values: List[float], period: int) -> float:
-        """Proper EMA calculation."""
         if len(values) < period:
             return sum(values) / len(values)
         
@@ -73,23 +74,31 @@ class BTCRegimeDetector:
         
         return ema
     
-    def _calculate_adx(self, ohlcv: List, period: int = 14) -> float:
+    def _calculate_true_adx(self, ohlcv: List, period: int = 14) -> float:
         """
-        🆕 Calculate ADX (Average Directional Index)
-        Returns 0-100 value indicating trend strength
+        🆕 TRUE ADX with proper smoothing
+        Wilder's smoothing method for institutional-grade stability
         """
-        if len(ohlcv) < period * 2:
-            return 25.0  # Default neutral
+        if len(ohlcv) < period * 3:  # Need more data for true smoothing
+            return 25.0
         
         highs = [c[2] for c in ohlcv]
         lows = [c[3] for c in ohlcv]
         closes = [c[4] for c in ohlcv]
         
+        # Calculate True Range (TR)
+        tr_list = []
+        for i in range(1, len(ohlcv)):
+            tr = max(
+                highs[i] - lows[i],
+                abs(highs[i] - closes[i-1]),
+                abs(lows[i] - closes[i-1])
+            )
+            tr_list.append(tr)
+        
         # Calculate +DM and -DM
         plus_dm = []
         minus_dm = []
-        tr_list = []
-        
         for i in range(1, len(ohlcv)):
             up_move = highs[i] - highs[i-1]
             down_move = lows[i-1] - lows[i]
@@ -103,40 +112,50 @@ class BTCRegimeDetector:
                 minus_dm.append(down_move)
             else:
                 minus_dm.append(0)
-            
-            # True Range
-            tr = max(
-                highs[i] - lows[i],
-                abs(highs[i] - closes[i-1]),
-                abs(lows[i] - closes[i-1])
-            )
-            tr_list.append(tr)
         
-        # Smooth DM and TR
-        if len(plus_dm) < period:
-            return 25.0
+        # 🆕 WILDER'S SMOOTHING (True ADX)
+        # First values: simple average
+        atr = sum(tr_list[:period]) / period
+        plus_di_sum = sum(plus_dm[:period])
+        minus_di_sum = sum(minus_dm[:period])
         
-        smoothed_plus_dm = sum(plus_dm[:period])
-        smoothed_minus_dm = sum(minus_dm[:period])
-        smoothed_tr = sum(tr_list[:period])
-        
-        for i in range(period, len(plus_dm)):
-            smoothed_plus_dm = (smoothed_plus_dm * (period - 1) + plus_dm[i]) / period
-            smoothed_minus_dm = (smoothed_minus_dm * (period - 1) + minus_dm[i]) / period
-            smoothed_tr = (smoothed_tr * (period - 1) + tr_list[i]) / period
+        # Wilder's smoothing formula: ((prev * (n-1)) + current) / n
+        for i in range(period, len(tr_list)):
+            atr = ((atr * (period - 1)) + tr_list[i]) / period
+            plus_di_sum = ((plus_di_sum * (period - 1)) + plus_dm[i]) / period
+            minus_di_sum = ((minus_di_sum * (period - 1)) + minus_dm[i]) / period
         
         # Calculate DI
-        plus_di = (smoothed_plus_dm / smoothed_tr) * 100 if smoothed_tr > 0 else 0
-        minus_di = (smoothed_minus_dm / smoothed_tr) * 100 if smoothed_tr > 0 else 0
+        plus_di = (plus_di_sum / atr) * 100 if atr > 0 else 0
+        minus_di = (minus_di_sum / atr) * 100 if atr > 0 else 0
         
-        # Calculate DX and ADX
+        # Calculate DX
         dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100 if (plus_di + minus_di) > 0 else 0
         
-        # Simplified ADX (using last DX as proxy)
-        return dx
+        # 🆕 SMOOTH DX to get TRUE ADX (Wilder's method)
+        # Need DX history for smoothing
+        if len(self._adx_history) < 2:
+            # First run: initialize with DX
+            adx = dx
+        else:
+            # Smooth DX: ((prev_adx * (n-1)) + current_dx) / n
+            prev_adx = self._adx_history[-1]
+            adx = ((prev_adx * (period - 1)) + dx) / period
+        
+        # 🆕 SECOND LAYER: Historical smoothing for stability
+        self._adx_history.append(adx)
+        if len(self._adx_history) > self.ADX_HISTORY_SIZE:
+            self._adx_history.pop(0)
+        
+        # Return EMA of ADX history for final polish
+        if len(self._adx_history) >= 3:
+            final_adx = sum(self._adx_history) / len(self._adx_history)
+        else:
+            final_adx = adx
+        
+        return final_adx
     
     def _get_ema_signals(self, ohlcv: List, name: str) -> Dict:
-        """True EMA200 calculation."""
         if len(ohlcv) < 200:
             return {"valid": False, "reason": f"Need 200 candles, got {len(ohlcv)}"}
         
@@ -168,18 +187,14 @@ class BTCRegimeDetector:
     def analyze(self, ohlcv_15m: List[List[float]], 
                 ohlcv_1h: List[List[float]],
                 ohlcv_4h: List[List[float]]) -> RegimeAnalysis:
-        """
-        Balanced analysis with tiered confidence system.
-        """
         
-        # Layer 1-4 analysis
         ema_score, ema_details = self._analyze_ema_structure(ohlcv_15m, ohlcv_1h, ohlcv_4h)
         structure_score, structure_details = self._analyze_market_structure(ohlcv_4h)
         momentum_score, momentum_details = self._analyze_momentum(ohlcv_15m, ohlcv_1h)
         vol_score, vol_details = self._analyze_volatility(ohlcv_15m)
         
-        # 🆕 Calculate ADX from 15m data
-        adx_value = self._calculate_adx(ohlcv_15m)
+        # 🆕 TRUE ADX with smoothing
+        adx_value = self._calculate_true_adx(ohlcv_15m)
         
         total_score = (
             ema_score * 0.4 +
@@ -191,12 +206,10 @@ class BTCRegimeDetector:
         regime, confidence = self._classify_regime(total_score)
         consistency = self._check_consistency()
         
-        # 🆕 Apply new balanced regime rules
         can_trade, trade_mode, block_reason, tier_req, adx_thresh = self._apply_balanced_rules(
             regime, confidence, consistency, adx_value, vol_details
         )
         
-        # Update history
         self.regime_history.append(regime)
         if len(self.regime_history) > self.max_history:
             self.regime_history.pop(0)
@@ -227,7 +240,6 @@ class BTCRegimeDetector:
         
         self._last_analysis = analysis
         
-        # 🆕 ENHANCED LOGGING
         status_emoji = "✅" if can_trade else "🚫"
         logger.info(
             "[REGIME GATE] %s | Conf:%d%% | ADX:%.1f | %s | Tier:%s | %s | %s",
@@ -245,29 +257,20 @@ class BTCRegimeDetector:
     def _apply_balanced_rules(self, regime: BTCRegime, confidence: int, 
                              consistency: str, adx: float, 
                              vol_details: Dict) -> Tuple[bool, str, Optional[str], str, float]:
-        """
-        🆕 BALANCED RULES (Tiered Confidence System)
         
-        Returns: (can_trade, trade_mode, block_reason, tier_requirement, adx_threshold)
-        """
-        
-        # 1️⃣ REGIME CHANGING: Skip one cycle
         if consistency == "CHANGING":
             if not self._skip_next_cycle:
                 self._skip_next_cycle = True
                 return False, "WAIT", "Regime CHANGING - skipping 1 cycle", "N/A", 0
             else:
-                self._skip_next_cycle = False  # Reset after skip
+                self._skip_next_cycle = False
         
-        # 2️⃣ HARD BLOCK: Confidence < 20%
         if confidence < self.HARD_BLOCK_CONFIDENCE:
             return False, "BLOCK", f"Confidence {confidence}% < {self.HARD_BLOCK_CONFIDENCE}% (Hard Block)", "N/A", 0
         
-        # 3️⃣ UNKNOWN REGIME: Block
         if regime == BTCRegime.UNKNOWN:
             return False, "BLOCK", "Unknown regime", "N/A", 0
         
-        # 4️⃣ CHOPPY MARKET: Elite only
         if regime == BTCRegime.CHOPPY:
             if confidence < self.CHOPPY_MIN_CONFIDENCE:
                 return False, "BLOCK", f"CHOPPY + Low confidence {confidence}% < {self.CHOPPY_MIN_CONFIDENCE}%", "N/A", 0
@@ -275,10 +278,8 @@ class BTCRegimeDetector:
             if adx < self.CHOPPY_ADX_MIN:
                 return False, "BLOCK", f"CHOPPY + Weak ADX {adx:.1f} < {self.CHOPPY_ADX_MIN}", f"Tier1-{self.CHOPPY_TIER_MIN}+", self.CHOPPY_ADX_MIN
             
-            # Choppy allows trade but only elite setups
             return True, "RANGE", None, f"Tier1-{self.CHOPPY_TIER_MIN}+", self.CHOPPY_ADX_MIN
         
-        # 5️⃣ BEAR/BULL MARKET: Controlled allow
         if regime in [BTCRegime.BEAR, BTCRegime.BULL, BTCRegime.STRONG_BEAR, BTCRegime.STRONG_BULL]:
             if confidence < self.TREND_MIN_CONFIDENCE:
                 return False, "BLOCK", f"{regime.value} + Low confidence {confidence}% < {self.TREND_MIN_CONFIDENCE}%", "N/A", 0
@@ -288,11 +289,9 @@ class BTCRegimeDetector:
             
             return True, "TREND", None, f"Tier1-{self.TREND_TIER_MIN}+", self.TREND_ADX_MIN
         
-        # Fallback: Block unknown states
         return False, "BLOCK", f"Unhandled regime: {regime.value}", "N/A", 0
     
     def _analyze_ema_structure(self, tf15: List, tf1h: List, tf4h: List) -> Tuple[int, Dict]:
-        """Multi-timeframe EMA."""
         score = 0
         details = {}
         
@@ -328,7 +327,6 @@ class BTCRegimeDetector:
         return max(-50, min(50, score)), details
     
     def _analyze_market_structure(self, ohlcv_4h: List) -> Tuple[int, Dict]:
-        """HH/HL or LH/LL detection."""
         if len(ohlcv_4h) < 30:
             return 0, {"error": "Insufficient data"}
         
@@ -376,7 +374,6 @@ class BTCRegimeDetector:
         return score, details
     
     def _analyze_momentum(self, tf15: List, tf1h: List) -> Tuple[int, Dict]:
-        """RSI + Volume."""
         details = {}
         
         if len(tf15) >= 20:
@@ -407,7 +404,6 @@ class BTCRegimeDetector:
         return max(-25, min(25, total)), details
     
     def _analyze_volatility(self, ohlcv: List) -> Tuple[int, Dict]:
-        """Balanced ATR scoring."""
         if len(ohlcv) < 14:
             return 0, {"error": "No data", "atr_pct": 0}
         
@@ -447,23 +443,23 @@ class BTCRegimeDetector:
         return score, details
     
     def _classify_regime(self, total_score: float) -> Tuple[BTCRegime, int]:
-        """Classify regime."""
         abs_score = abs(total_score)
         
-        # 🆕 CHANGED: Multiplier 1.5 → 2.0
-        # 15% → 30%, 30% → 60%, 33% → 66%
-        confidence = min(100, int(abs_score * 2))
+        trend_confidence = min(100, int(abs_score * 2))
+        choppy_confidence = min(45, int(25 + abs_score))
         
         if total_score >= 25:
+            confidence = min(100, trend_confidence + 10)
             return BTCRegime.STRONG_BULL, confidence
         elif total_score >= 10:
-            return BTCRegime.BULL, confidence
+            return BTCRegime.BULL, trend_confidence
         elif total_score <= -25:
+            confidence = min(100, trend_confidence + 10)
             return BTCRegime.STRONG_BEAR, confidence
         elif total_score <= -10:
-            return BTCRegime.BEAR, confidence
+            return BTCRegime.BEAR, trend_confidence
         else:
-            return BTCRegime.CHOPPY, max(0, 50 - int(abs_score * 2))
+            return BTCRegime.CHOPPY, choppy_confidence
     
     def _calculate_strength(self, abs_score: float) -> str:
         if abs_score >= 40:
@@ -474,7 +470,6 @@ class BTCRegimeDetector:
             return "WEAK"
     
     def _check_consistency(self) -> str:
-        """Regime consistency check."""
         if len(self.regime_history) < 3:
             return "INSUFFICIENT_DATA"
         
@@ -487,7 +482,6 @@ class BTCRegimeDetector:
             return "CHANGING"
     
     def _calculate_rsi(self, closes: List[float], period: int = 14) -> float:
-        """Standard RSI."""
         if len(closes) < period + 1:
             return 50.0
         
@@ -507,26 +501,20 @@ class BTCRegimeDetector:
         return 100 - (100 / (1 + avg_gain / avg_loss))
     
     def should_trade_alt(self, alt_direction: str, min_confidence: int = 60) -> Tuple[bool, str]:
-        """
-        Final gate check - uses pre-computed analysis with tier requirements.
-        """
         if not self._last_analysis:
             return False, "No analysis"
         
         analysis = self._last_analysis
         
-        # Use pre-computed decision
         if not analysis.can_trade:
             return False, analysis.block_reason or "Regime block"
         
-        # Direction alignment check for trend mode
         if analysis.trade_mode == "TREND":
             if analysis.regime in [BTCRegime.STRONG_BULL, BTCRegime.BULL] and alt_direction != "LONG":
                 return False, f"BTC {analysis.regime.value} but trying SHORT"
             if analysis.regime in [BTCRegime.STRONG_BEAR, BTCRegime.BEAR] and alt_direction != "SHORT":
                 return False, f"BTC {analysis.regime.value} but trying LONG"
         
-        # 🆕 Return tier requirement info
         return True, f"{analysis.trade_mode} | {analysis.regime.value} | Need {analysis.tier_requirement} | ADX>{analysis.adx_threshold}"
 
 
