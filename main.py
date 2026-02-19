@@ -48,6 +48,7 @@ class ArunabhaBot:
             "4h": []
         }
         self.last_btc_update = None
+        self._btc_data_ready = False  # 🆕 Flag to track BTC data readiness
         
     async def start(self):
         """Start surgical execution engine."""
@@ -58,7 +59,14 @@ class ArunabhaBot:
         
         await self.exchange.connect()
         await self.mood.fetch_fear_index()
-        await self._update_btc_data()
+        
+        # 🆕 CRITICAL: Ensure BTC data is fully loaded BEFORE starting WebSocket
+        await self._ensure_btc_data_loaded()
+        
+        if not self._btc_data_ready:
+            logger.error("❌ CRITICAL: Cannot start without BTC data")
+            await self.alerts.send_message("❌ Bot startup failed: BTC data unavailable")
+            return
         
         self.ws = BinanceWSFeed(on_candle_close=self.on_candle_close)
         self.exchange.set_ws_feed(self.ws)
@@ -81,6 +89,52 @@ class ArunabhaBot:
                 await self._update_btc_data()
             
             await self._check_active_trades()
+    
+    async def _ensure_btc_data_loaded(self):
+        """
+        🆕 NEW: Ensure BTC data is loaded with retries before starting WS
+        """
+        max_retries = 5
+        retry_delay = 3  # seconds
+        
+        for attempt in range(1, max_retries + 1):
+            logger.info(f"[BTC SEED] Attempt {attempt}/{max_retries}...")
+            
+            try:
+                await self._update_btc_data()
+                
+                # Check if all timeframes have sufficient data
+                has_15m = len(self.btc_cache["15m"]) >= 200
+                has_1h = len(self.btc_cache["1h"]) >= 100
+                has_4h = len(self.btc_cache["4h"]) >= 100
+                
+                if has_15m and has_1h and has_4h:
+                    self._btc_data_ready = True
+                    
+                    # Log regime analysis
+                    analysis = btc_detector.analyze(
+                        self.btc_cache["15m"],
+                        self.btc_cache["1h"],
+                        self.btc_cache["4h"]
+                    )
+                    logger.info("[BTC] ✅ Data ready | Regime: %s | Mode: %s | Conf: %d%%",
+                               analysis.regime.value, analysis.trade_mode,
+                               analysis.confidence)
+                    return True
+                else:
+                    logger.warning(f"[BTC] Partial data - 15m:{len(self.btc_cache['15m'])}/200, "
+                                 f"1h:{len(self.btc_cache['1h'])}/100, "
+                                 f"4h:{len(self.btc_cache['4h'])}/100")
+                    
+            except Exception as exc:
+                logger.error(f"[BTC] Fetch error: {exc}")
+            
+            if attempt < max_retries:
+                logger.info(f"[BTC] Retrying in {retry_delay}s...")
+                await asyncio.sleep(retry_delay)
+        
+        logger.error("❌ [BTC] Failed to load after all retries")
+        return False
                 
     async def _update_btc_data(self):
         """Fetch BTC multi-timeframe data."""
@@ -101,6 +155,7 @@ class ArunabhaBot:
                            analysis.confidence, "YES" if analysis.can_trade else "NO")
         except Exception as exc:
             logger.error("BTC update failed: %s", exc)
+            raise  # Re-raise to trigger retry logic
     
     async def _check_active_trades(self):
         """Check active trades for management."""
@@ -127,12 +182,19 @@ class ArunabhaBot:
         if timeframe != config.TIMEFRAME:
             return
         
+        # 🆕 GUARD: Skip if BTC data not ready
+        if not self._btc_data_ready:
+            logger.warning(f"[SKIP] {symbol} - BTC data not ready")
+            return
+        
         current_date = datetime.now().strftime("%Y-%m-%d")
         if self.risk.daily_stats["date"] != current_date:
             self.risk.reset_daily()
         
-        if not all(self.btc_cache.values()):
-            await self._update_btc_data()
+        # 🆕 GUARD: Check BTC cache validity
+        if not all(self.btc_cache.values()) or len(self.btc_cache["15m"]) < 50:
+            logger.warning(f"[SKIP] {symbol} - Insufficient BTC cache")
+            return
         
         try:
             ohlcv_5m = await self.exchange.fetch_ohlcv(symbol, "5m", 50)
@@ -181,7 +243,7 @@ class ArunabhaBot:
         stats = self.risk.get_stats()
         
         btc_info = "No data"
-        if self.btc_cache["15m"] and self.btc_cache["1h"] and self.btc_cache["4h"]:
+        if self._btc_data_ready and self.btc_cache["15m"] and self.btc_cache["1h"] and self.btc_cache["4h"]:
             try:
                 analysis = btc_detector.analyze(
                     self.btc_cache["15m"],
@@ -198,8 +260,9 @@ class ArunabhaBot:
                 pass
         
         return web.json_response({
-            "status": "ok",
+            "status": "ok" if self._btc_data_ready else "degraded",
             "version": "3.0-surgical",
+            "btc_data_ready": self._btc_data_ready,
             "fear_index": self.mood.fear_index,
             "daily_stats": stats,
             "btc_regime": btc_info,
