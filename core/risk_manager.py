@@ -1,6 +1,6 @@
 """
-ARUNABHA RISK MANAGER v3.1
-Balanced capital protection with relaxed ATR limits
+ARUNABHA RISK MANAGER v3.2
+Conservative Elite Institutional Mode
 """
 
 import logging
@@ -30,17 +30,19 @@ class Trade:
 
 class RiskManager:
     """
-    Balanced risk management - capital protection maintained.
+    Conservative Elite institutional risk management.
     """
     
+    # FIX 10: Keep at 2 for 3rd loss lock (2 consecutive = lock on 3rd)
     MAX_CONSECUTIVE_SL = 2
     MAX_DAILY_DRAWDOWN_PCT = -2.0
     PARTIAL_EXIT_R = 1.0
-    BREAK_EVEN_TRIGGER_PCT = 0.5
     
-    # RELAXED ATR THRESHOLDS
-    ATR_BLOCK_THRESHOLD = 4.0        # 3% → 4%
-    ATR_REDUCE_50_THRESHOLD = 2.5    # 2% → 2.5%
+    # FIX 9: Use configurable break-even trigger
+    BREAK_EVEN_TRIGGER_PCT = 0.6  # Slightly more conservative than 0.5
+    
+    ATR_BLOCK_THRESHOLD = 4.0
+    ATR_REDUCE_50_THRESHOLD = 2.5
     ATR_REDUCE_30_THRESHOLD = 0.4
     
     def __init__(self):
@@ -67,9 +69,10 @@ class RiskManager:
             logger.error("[RISK LOCK] Day locked: %s", self.daily_stats["lock_reason"])
             return True, self.daily_stats["lock_reason"]
         
+        # FIX 10: 2 consecutive SL = lock (3rd trade blocked)
         if self.daily_stats["consecutive_sl"] >= self.MAX_CONSECUTIVE_SL:
             self.daily_stats["day_locked"] = True
-            self.daily_stats["lock_reason"] = f"{self.daily_stats['consecutive_sl']} consecutive SL"
+            self.daily_stats["lock_reason"] = f"{self.daily_stats['consecutive_sl']} consecutive SL - Elite Protection"
             logger.error("[RISK LOCK] Day locked: %s", self.daily_stats["lock_reason"])
             return True, self.daily_stats["lock_reason"]
         
@@ -103,7 +106,7 @@ class RiskManager:
                          atr_pct: float = 1.0,
                          fear_index: int = 50) -> Dict[str, float]:
         """
-        Enhanced with fear-based position sizing
+        Conservative Elite position sizing.
         """
         risk_amount = account_size * (config.RISK_PCT / 100)
         sl_distance = abs(entry - stop_loss)
@@ -114,25 +117,24 @@ class RiskManager:
         
         position_usd = risk_amount / sl_distance_pct
         
-        # ATR-based adjustments (relaxed)
-        if atr_pct > self.ATR_BLOCK_THRESHOLD:  # 4%
+        # ATR-based adjustments
+        if atr_pct > self.ATR_BLOCK_THRESHOLD:
             logger.warning("[RISK] Position blocked: ATR %.2f%% > %.1f%%", atr_pct, self.ATR_BLOCK_THRESHOLD)
             return {"blocked": True, "reason": f"ATR {atr_pct:.2f}% too high"}
         
-        if self.ATR_REDUCE_50_THRESHOLD <= atr_pct <= self.ATR_BLOCK_THRESHOLD:  # 2.5% - 4%
+        if self.ATR_REDUCE_50_THRESHOLD <= atr_pct <= self.ATR_BLOCK_THRESHOLD:
             position_usd *= 0.5
             logger.info("[RISK] Position reduced 50%%: ATR %.2f%%", atr_pct)
         
-        if atr_pct < self.ATR_REDUCE_30_THRESHOLD:  # < 0.4%
+        if atr_pct < self.ATR_REDUCE_30_THRESHOLD:
             position_usd *= 0.7
             logger.info("[RISK] Position reduced 30%%: ATR %.2f%% low", atr_pct)
         
-        # FEAR INDEX adjustments - FIX 3: Use config.FEAR_INDEX_STOP instead of hardcoded 80
-        if fear_index < 15:  # Extreme fear
+        # Fear index adjustments
+        if fear_index < 15:
             position_usd *= 0.5
             logger.info("[RISK] Position reduced 50%%: Extreme Fear %d", fear_index)
         
-        # FIX 3: Use config.FEAR_INDEX_STOP instead of hardcoded 80
         if fear_index > config.FEAR_INDEX_STOP:
             logger.warning("[RISK] Position blocked: Extreme Greed %d (threshold: %d)", 
                           fear_index, config.FEAR_INDEX_STOP)
@@ -152,7 +154,7 @@ class RiskManager:
             "atr_pct": atr_pct,
             "fear_index": fear_index,
             "vol_adjusted": True,
-            "entry": entry  # Store for validation
+            "entry": entry
         }
     
     def calculate_sl_tp(self,
@@ -167,16 +169,11 @@ class RiskManager:
             sl = entry + (atr * config.ATR_SL_MULT)
             tp = entry - (atr * config.ATR_TP_MULT)
         
+        # CHOPPY mode: Tighter SL, but TP handled in smart_signal for ATR adaptivity
         if trade_mode == "CHOPPY":
-            if direction == "LONG":
-                tp = entry * 1.008
-            else:
-                tp = entry * 0.992
-            
             sl_distance = abs(entry - sl)
             sl = entry - (sl_distance * 0.8) if direction == "LONG" else entry + (sl_distance * 0.8)
-            
-            logger.info("[RISK] CHOPPY mode: TP compressed to %.2f, SL tightened", tp)
+            logger.info("[RISK] CHOPPY mode: SL tightened")
         
         rr = abs(tp - entry) / abs(entry - sl) if abs(entry - sl) > 0 else 0
         
@@ -224,10 +221,12 @@ class RiskManager:
             logger.info("[RISK] PARTIAL_EXIT: %s at %.2fR (%.2f)", symbol, current_r, current_price)
             return "PARTIAL_EXIT"
         
-        if current_r >= 0.5 and not trade.be_triggered:
+        # FIX 9: Use configurable break-even trigger
+        if current_r >= self.BREAK_EVEN_TRIGGER_PCT and not trade.be_triggered:
             trade.be_triggered = True
             trade.stop_loss = trade.entry
-            logger.info("[RISK] BREAK_EVEN: %s SL moved to entry @ %.2f", symbol, current_price)
+            logger.info("[RISK] BREAK_EVEN: %s SL moved to entry @ %.2f (%.2fR)", 
+                       symbol, current_price, self.BREAK_EVEN_TRIGGER_PCT)
             return "BREAK_EVEN"
         
         if trade.direction == "LONG":
@@ -328,7 +327,7 @@ class RiskManager:
         }
         self.active_trades.clear()
         self.trade_history.clear()
-        logger.info("[RISK] Daily reset complete")
+        logger.info("[RISK] Daily reset complete - Elite Mode Ready")
 
 
 risk_manager = RiskManager()
