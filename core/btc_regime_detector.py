@@ -1,6 +1,6 @@
 """
-ARUNABHA BTC REGIME DETECTOR v3.4
-Balanced institutional-grade
+ARUNABHA BTC REGIME DETECTOR v3.5
+Conservative Elite Institutional Mode
 """
 
 import logging
@@ -37,15 +37,17 @@ class RegimeAnalysis:
 
 class BTCRegimeDetector:
     """
-    Balanced institutional regime detection.
+    Conservative Elite Institutional regime detection.
     """
     
     HARD_BLOCK_CONFIDENCE = 20
     CHOPPY_MIN_CONFIDENCE = 30
-    TREND_MIN_CONFIDENCE = 30
+    # FIX 3: Increased from 30 to 40 for stricter trend validation
+    TREND_MIN_CONFIDENCE = 40
     
     CHOPPY_ADX_MIN = 28
-    TREND_ADX_MIN = 22
+    # FIX 4: Increased from 22 to 25 for stronger trend confirmation
+    TREND_ADX_MIN = 25
     
     CHOPPY_TIER_MIN = 85
     TREND_TIER_MIN = 70
@@ -73,7 +75,8 @@ class BTCRegimeDetector:
     
     def _calculate_true_adx(self, ohlcv: List, period: int = 14) -> float:
         if len(ohlcv) < period * 3:
-            return 25.0
+            # FIX 1: Reduced from 25.0 to 15.0 to prevent fake trend detection
+            return 15.0
         
         highs = [c[2] for c in ohlcv]
         lows = [c[3] for c in ohlcv]
@@ -105,7 +108,8 @@ class BTCRegimeDetector:
                 minus_dm.append(0)
         
         if len(plus_dm) < period:
-            return 25.0
+            # FIX 1: Consistent low-data fallback
+            return 15.0
         
         atr = sum(tr_list[:period]) / period
         plus_di_sum = sum(plus_dm[:period])
@@ -263,9 +267,11 @@ class BTCRegimeDetector:
             return True, "RANGE", None, f"Tier1-{self.CHOPPY_TIER_MIN}+", self.CHOPPY_ADX_MIN
         
         if regime in [BTCRegime.BEAR, BTCRegime.BULL, BTCRegime.STRONG_BEAR, BTCRegime.STRONG_BULL]:
+            # FIX 3: Stricter confidence requirement
             if confidence < self.TREND_MIN_CONFIDENCE:
                 return False, "BLOCK", f"{regime.value} + Low confidence {confidence}% < {self.TREND_MIN_CONFIDENCE}%", "N/A", 0
             
+            # FIX 4: Stricter ADX requirement
             if adx < self.TREND_ADX_MIN:
                 return False, "BLOCK", f"{regime.value} + Weak ADX {adx:.1f} < {self.TREND_ADX_MIN}", f"Tier1-{self.TREND_TIER_MIN}+", self.TREND_ADX_MIN
             
@@ -427,7 +433,8 @@ class BTCRegimeDetector:
     def _classify_regime(self, total_score: float) -> Tuple[BTCRegime, int]:
         abs_score = abs(total_score)
         
-        trend_confidence = min(100, int(abs_score * 2))
+        # FIX 2: Reduced from abs_score * 2 to abs_score * 1.6 for conservative confidence
+        trend_confidence = min(100, int(abs_score * 1.6))
         choppy_confidence = min(45, int(25 + abs_score))
         
         if total_score >= 25:
@@ -485,15 +492,13 @@ class BTCRegimeDetector:
     def should_trade_alt(self, alt_direction: str, min_confidence: int = 45) -> Tuple[bool, str]:
         """
         Determine if altcoin trading is allowed based on BTC regime.
-        
-        Now properly enforces min_confidence parameter.
         """
         if not self._last_analysis:
             return False, "No analysis"
         
         analysis = self._last_analysis
         
-        # FIX 1: Enforce min_confidence check (was missing!)
+        # Enforce min_confidence check
         if analysis.confidence < min_confidence:
             return False, f"Confidence {analysis.confidence}% < required {min_confidence}%"
         
