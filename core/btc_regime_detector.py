@@ -399,7 +399,7 @@ class BTCRegimeDetector:
         
         atr = sum(trs[-14:]) / 14
         current_price = ohlcv[-1][4]
-        atr_pct = (atr / current_price) * 100
+        atr_pct = (atr / current_price) * 100 if current_price > 0 else 0
         
         details = {"atr_pct": round(atr_pct, 2)}
         
@@ -483,10 +483,19 @@ class BTCRegimeDetector:
         return 100 - (100 / (1 + avg_gain / avg_loss))
     
     def should_trade_alt(self, alt_direction: str, min_confidence: int = 45) -> Tuple[bool, str]:
+        """
+        Determine if altcoin trading is allowed based on BTC regime.
+        
+        Now properly enforces min_confidence parameter.
+        """
         if not self._last_analysis:
             return False, "No analysis"
         
         analysis = self._last_analysis
+        
+        # FIX 1: Enforce min_confidence check (was missing!)
+        if analysis.confidence < min_confidence:
+            return False, f"Confidence {analysis.confidence}% < required {min_confidence}%"
         
         if not analysis.can_trade:
             return False, analysis.block_reason or "Regime block"
