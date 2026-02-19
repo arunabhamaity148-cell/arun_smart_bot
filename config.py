@@ -1,6 +1,6 @@
 """
-ARUNABHA EXTREME FEAR BOT v2.0
-Updated config with strict filters
+ARUNABHA EXTREME FEAR BOT v2.1
+Balanced configuration
 """
 
 import os
@@ -32,7 +32,7 @@ RSI_OVERSOLD = 38
 RSI_OVERBOUGHT = 62
 EMA_FAST = 9
 EMA_SLOW = 21
-EMA_TREND = 200  # 🆕 Mandatory EMA200
+EMA_TREND = 200
 VOLUME_MULTIPLIER = 1.0
 
 # ─── Risk Management ────────────────────────────────────
@@ -50,11 +50,11 @@ BEAR_TRAP_WICK_MULT = 2.0
 LIQUIDITY_SWEEP_PCT = 0.3
 FUNDING_EXTREME = -0.0005
 
-# 🆕 STRICT SETTINGS
-MIN_SCORE_TO_TRADE = 50  # Was 40
-REQUIRE_EMA200_CONFIRM = True  # 🆕 Mandatory
-REQUIRE_STRUCTURE_SHIFT = True  # 🆕 BOS/CHoCH required
-ENTRY_CONFIRMATION_WAIT = True  # 🆕 Wait for next candle
+# 🆕 BALANCED SETTINGS
+MIN_SCORE_TO_TRADE = 50
+REQUIRE_EMA200_CONFIRM = True
+REQUIRE_STRUCTURE_SHIFT = True
+ENTRY_CONFIRMATION_WAIT = True
 
 # ─── Simple Filters ───────────────────────────────────
 FILTERS = {
@@ -64,16 +64,16 @@ FILTERS = {
     "liquidity_zone": True,
     "funding_safe": True,
     "cooldown_ok": True,
-    "ema200_confirm": True,  # 🆕 New
-    "structure_shift": True,  # 🆕 New
+    "ema200_confirm": True,
+    "structure_shift": True,
 }
-MIN_FILTERS_PASS = 6  # 6/8 = 75% (was 4/6)
+MIN_FILTERS_PASS = 5  # 🆕 Reduced from 6
 
 # ─── Limits ────────────────────────────────────────────
-MAX_SIGNALS_DAY = 3
+MAX_SIGNALS_DAY = 5  # 🆕 Increased from 3
 MAX_CONCURRENT = 1
 COOLDOWN_MINUTES = 30
-FEAR_INDEX_STOP = 75
+FEAR_INDEX_STOP = 80  # 🆕 Greed block threshold
 
 # ─── Session Times (IST) ──────────────────────────────
 LONDON_OPEN_IST = 13
@@ -82,7 +82,7 @@ ASIA_CLOSE_IST = 9
 
 # ─── Bot Info ───────────────────────────────────────────
 BOT_NAME = "ARUNABHA EXTREME FEAR"
-BOT_VERSION = "v2.0"
+BOT_VERSION = "v2.1"
 
 # ─── Fear Index API ────────────────────────────────────
 FEAR_GREED_API_URL = "https://api.alternative.me/fng/?limit=1"
