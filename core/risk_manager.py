@@ -38,7 +38,7 @@ class RiskManager:
     PARTIAL_EXIT_R = 1.0
     BREAK_EVEN_TRIGGER_PCT = 0.5
     
-    # 🆕 RELAXED ATR THRESHOLDS
+    # RELAXED ATR THRESHOLDS
     ATR_BLOCK_THRESHOLD = 4.0        # 3% → 4%
     ATR_REDUCE_50_THRESHOLD = 2.5    # 2% → 2.5%
     ATR_REDUCE_30_THRESHOLD = 0.4
@@ -101,9 +101,9 @@ class RiskManager:
                          entry: float,
                          stop_loss: float,
                          atr_pct: float = 1.0,
-                         fear_index: int = 50) -> Dict[str, float]:  # 🆕 Added fear_index
+                         fear_index: int = 50) -> Dict[str, float]:
         """
-        🆕 Enhanced with fear-based position sizing
+        Enhanced with fear-based position sizing
         """
         risk_amount = account_size * (config.RISK_PCT / 100)
         sl_distance = abs(entry - stop_loss)
@@ -114,7 +114,7 @@ class RiskManager:
         
         position_usd = risk_amount / sl_distance_pct
         
-        # 🆕 ATR-based adjustments (relaxed)
+        # ATR-based adjustments (relaxed)
         if atr_pct > self.ATR_BLOCK_THRESHOLD:  # 4%
             logger.warning("[RISK] Position blocked: ATR %.2f%% > %.1f%%", atr_pct, self.ATR_BLOCK_THRESHOLD)
             return {"blocked": True, "reason": f"ATR {atr_pct:.2f}% too high"}
@@ -127,14 +127,16 @@ class RiskManager:
             position_usd *= 0.7
             logger.info("[RISK] Position reduced 30%%: ATR %.2f%% low", atr_pct)
         
-        # 🆕 FEAR INDEX adjustments
+        # FEAR INDEX adjustments - FIX 3: Use config.FEAR_INDEX_STOP instead of hardcoded 80
         if fear_index < 15:  # Extreme fear
             position_usd *= 0.5
             logger.info("[RISK] Position reduced 50%%: Extreme Fear %d", fear_index)
         
-        if fear_index > 80:  # Extreme greed
-            logger.warning("[RISK] Position blocked: Extreme Greed %d", fear_index)
-            return {"blocked": True, "reason": f"Extreme Greed {fear_index}"}
+        # FIX 3: Use config.FEAR_INDEX_STOP instead of hardcoded 80
+        if fear_index > config.FEAR_INDEX_STOP:
+            logger.warning("[RISK] Position blocked: Extreme Greed %d (threshold: %d)", 
+                          fear_index, config.FEAR_INDEX_STOP)
+            return {"blocked": True, "reason": f"Extreme Greed {fear_index} > {config.FEAR_INDEX_STOP}"}
         
         max_position = account_size * config.LEVERAGE
         position_usd = min(position_usd, max_position)
@@ -149,7 +151,8 @@ class RiskManager:
             "sl_distance_pct": sl_distance_pct * 100,
             "atr_pct": atr_pct,
             "fear_index": fear_index,
-            "vol_adjusted": True
+            "vol_adjusted": True,
+            "entry": entry  # Store for validation
         }
     
     def calculate_sl_tp(self,
