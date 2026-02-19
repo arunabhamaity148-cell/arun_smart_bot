@@ -1,11 +1,11 @@
 """
-ARUNABHA RISK MANAGER v3.0
-Institutional capital protection with hard locks
+ARUNABHA RISK MANAGER v3.1
+Balanced capital protection with relaxed ATR limits
 """
 
 import logging
 from dataclasses import dataclass, field
-from typing import Optional, Dict, List, Tuple  # 🆕 ADDED Tuple import
+from typing import Optional, Dict, List, Tuple
 from datetime import datetime
 
 import config
@@ -23,23 +23,25 @@ class Trade:
     size_usd: float
     timestamp: datetime
     max_holding_minutes: int = 90
-    # 🆕 Tracking fields
     partial_exited: bool = False
     be_triggered: bool = False
-    sl_count_toward_lock: bool = True  # Count this trade for day lock
+    sl_count_toward_lock: bool = True
 
 
 class RiskManager:
     """
-    Institutional-grade risk management with hard locks.
-    Issue V: Capital protection layer.
+    Balanced risk management - capital protection maintained.
     """
     
-    # 🆕 ISSUE V: HARD LOCK THRESHOLDS
     MAX_CONSECUTIVE_SL = 2
     MAX_DAILY_DRAWDOWN_PCT = -2.0
     PARTIAL_EXIT_R = 1.0
     BREAK_EVEN_TRIGGER_PCT = 0.5
+    
+    # 🆕 RELAXED ATR THRESHOLDS
+    ATR_BLOCK_THRESHOLD = 4.0        # 3% → 4%
+    ATR_REDUCE_50_THRESHOLD = 2.5    # 2% → 2.5%
+    ATR_REDUCE_30_THRESHOLD = 0.4
     
     def __init__(self):
         self.active_trades: Dict[str, Trade] = {}
@@ -49,29 +51,22 @@ class RiskManager:
             "wins": 0,
             "losses": 0,
             "pnl_pct": 0.0,
-            "consecutive_sl": 0,  # 🆕 Track consecutive SL
-            "day_locked": False,   # 🆕 Day lock flag
+            "consecutive_sl": 0,
+            "day_locked": False,
             "lock_reason": None
         }
-        self.trade_history: List[Dict] = []  # 🆕 For tracking
+        self.trade_history: List[Dict] = []
     
     def check_day_lock(self) -> Tuple[bool, Optional[str]]:
-        """
-        🆕 ISSUE V: Check if day is locked before trading.
-        Returns: (is_locked, reason)
-        """
-        # Check existing lock
         if self.daily_stats["day_locked"]:
             return True, self.daily_stats["lock_reason"]
         
-        # Check drawdown lock
         if self.daily_stats["pnl_pct"] <= self.MAX_DAILY_DRAWDOWN_PCT:
             self.daily_stats["day_locked"] = True
             self.daily_stats["lock_reason"] = f"Drawdown {self.daily_stats['pnl_pct']:.2f}% <= {self.MAX_DAILY_DRAWDOWN_PCT}%"
             logger.error("[RISK LOCK] Day locked: %s", self.daily_stats["lock_reason"])
             return True, self.daily_stats["lock_reason"]
         
-        # Check consecutive SL lock
         if self.daily_stats["consecutive_sl"] >= self.MAX_CONSECUTIVE_SL:
             self.daily_stats["day_locked"] = True
             self.daily_stats["lock_reason"] = f"{self.daily_stats['consecutive_sl']} consecutive SL"
@@ -81,28 +76,21 @@ class RiskManager:
         return False, None
     
     def can_trade(self, symbol: str) -> bool:
-        """
-        🆕 Enhanced with day lock check.
-        """
-        # Check day lock first (Issue V)
         is_locked, reason = self.check_day_lock()
         if is_locked:
             logger.warning("[RISK] Trade blocked: Day locked - %s", reason)
             return False
         
-        # Daily limit
         if self.daily_stats["total"] >= config.MAX_SIGNALS_DAY:
             logger.info("Daily limit reached: %d/%d", 
                        self.daily_stats["total"], config.MAX_SIGNALS_DAY)
             return False
             
-        # Concurrent limit
         if len(self.active_trades) >= config.MAX_CONCURRENT:
             logger.info("Max concurrent: %d/%d", 
                        len(self.active_trades), config.MAX_CONCURRENT)
             return False
             
-        # Already active on this symbol
         if symbol in self.active_trades:
             return False
             
@@ -112,9 +100,10 @@ class RiskManager:
                          account_size: float,
                          entry: float,
                          stop_loss: float,
-                         atr_pct: float = 1.0) -> Dict[str, float]:
+                         atr_pct: float = 1.0,
+                         fear_index: int = 50) -> Dict[str, float]:  # 🆕 Added fear_index
         """
-        🆕 ISSUE IV: Volatility-adjusted position sizing.
+        🆕 Enhanced with fear-based position sizing
         """
         risk_amount = account_size * (config.RISK_PCT / 100)
         sl_distance = abs(entry - stop_loss)
@@ -123,26 +112,30 @@ class RiskManager:
         if sl_distance_pct == 0:
             return {}
         
-        # Base position
         position_usd = risk_amount / sl_distance_pct
         
-        # 🆕 ISSUE IV: Volatility compression
-        # ATR > 3% → BLOCK (return empty = block)
-        if atr_pct > 3.0:
-            logger.warning("[RISK] Position blocked: ATR %.2f%% > 3%%", atr_pct)
+        # 🆕 ATR-based adjustments (relaxed)
+        if atr_pct > self.ATR_BLOCK_THRESHOLD:  # 4%
+            logger.warning("[RISK] Position blocked: ATR %.2f%% > %.1f%%", atr_pct, self.ATR_BLOCK_THRESHOLD)
             return {"blocked": True, "reason": f"ATR {atr_pct:.2f}% too high"}
         
-        # ATR 2-3% → Reduce 50%
-        if 2.0 <= atr_pct <= 3.0:
+        if self.ATR_REDUCE_50_THRESHOLD <= atr_pct <= self.ATR_BLOCK_THRESHOLD:  # 2.5% - 4%
             position_usd *= 0.5
             logger.info("[RISK] Position reduced 50%%: ATR %.2f%%", atr_pct)
         
-        # ATR < 0.4% → Avoid (reduce 30%)
-        if atr_pct < 0.4:
+        if atr_pct < self.ATR_REDUCE_30_THRESHOLD:  # < 0.4%
             position_usd *= 0.7
             logger.info("[RISK] Position reduced 30%%: ATR %.2f%% low", atr_pct)
         
-        # Cap at leverage limit
+        # 🆕 FEAR INDEX adjustments
+        if fear_index < 15:  # Extreme fear
+            position_usd *= 0.5
+            logger.info("[RISK] Position reduced 50%%: Extreme Fear %d", fear_index)
+        
+        if fear_index > 80:  # Extreme greed
+            logger.warning("[RISK] Position blocked: Extreme Greed %d", fear_index)
+            return {"blocked": True, "reason": f"Extreme Greed {fear_index}"}
+        
         max_position = account_size * config.LEVERAGE
         position_usd = min(position_usd, max_position)
         
@@ -155,6 +148,7 @@ class RiskManager:
             "leverage": config.LEVERAGE,
             "sl_distance_pct": sl_distance_pct * 100,
             "atr_pct": atr_pct,
+            "fear_index": fear_index,
             "vol_adjusted": True
         }
     
@@ -163,9 +157,6 @@ class RiskManager:
                        entry: float,
                        atr: float,
                        trade_mode: str = "TREND") -> Dict[str, float]:
-        """
-        🆕 ISSUE IV: Choppy mode TP compression.
-        """
         if direction == "LONG":
             sl = entry - (atr * config.ATR_SL_MULT)
             tp = entry + (atr * config.ATR_TP_MULT)
@@ -173,15 +164,12 @@ class RiskManager:
             sl = entry + (atr * config.ATR_SL_MULT)
             tp = entry - (atr * config.ATR_TP_MULT)
         
-        # 🆕 ISSUE IV: Choppy mode → compress TP to 0.6-1.1%
         if trade_mode == "CHOPPY":
-            # Override TP for choppy mode
             if direction == "LONG":
-                tp = entry * 1.008  # 0.8% target
+                tp = entry * 1.008
             else:
-                tp = entry * 0.992  # 0.8% target
+                tp = entry * 0.992
             
-            # Tighter SL in choppy
             sl_distance = abs(entry - sl)
             sl = entry - (sl_distance * 0.8) if direction == "LONG" else entry + (sl_distance * 0.8)
             
@@ -197,12 +185,10 @@ class RiskManager:
         }
     
     def open_trade(self, trade: Trade):
-        """Track new trade."""
         if trade.symbol in self.active_trades:
             logger.warning("Trade already exists for %s", trade.symbol)
             return False
         
-        # Check day lock
         is_locked, reason = self.check_day_lock()
         if is_locked:
             logger.error("Cannot open trade: Day locked - %s", reason)
@@ -218,16 +204,11 @@ class RiskManager:
         return True
     
     def check_trade_management(self, symbol: str, current_price: float) -> Optional[str]:
-        """
-        🆕 ISSUE V: Active trade management.
-        Returns action: "PARTIAL_EXIT", "BREAK_EVEN", "SL_HIT", "TP_HIT", None
-        """
         if symbol not in self.active_trades:
             return None
         
         trade = self.active_trades[symbol]
         
-        # Calculate current R
         if trade.direction == "LONG":
             r_distance = trade.entry - trade.stop_loss
             current_r = (current_price - trade.entry) / r_distance if r_distance != 0 else 0
@@ -235,21 +216,17 @@ class RiskManager:
             r_distance = trade.stop_loss - trade.entry
             current_r = (trade.entry - current_price) / r_distance if r_distance != 0 else 0
         
-        # 🆕 1R → 70% partial exit mandatory
         if current_r >= 1.0 and not trade.partial_exited:
             trade.partial_exited = True
             logger.info("[RISK] PARTIAL_EXIT: %s at %.2fR (%.2f)", symbol, current_r, current_price)
             return "PARTIAL_EXIT"
         
-        # 🆕 +0.5% → SL to break-even
         if current_r >= 0.5 and not trade.be_triggered:
             trade.be_triggered = True
-            # Move SL to entry (break-even)
             trade.stop_loss = trade.entry
             logger.info("[RISK] BREAK_EVEN: %s SL moved to entry @ %.2f", symbol, current_price)
             return "BREAK_EVEN"
         
-        # Check SL/TP
         if trade.direction == "LONG":
             if current_price <= trade.stop_loss:
                 return "SL_HIT"
@@ -264,13 +241,11 @@ class RiskManager:
         return None
     
     def close_trade(self, symbol: str, exit_price: float, reason: str):
-        """Close trade with PnL tracking."""
         if symbol not in self.active_trades:
             return None
         
         trade = self.active_trades.pop(symbol)
         
-        # Calculate PnL
         if trade.direction == "LONG":
             pnl_pct = (exit_price - trade.entry) / trade.entry * 100
         else:
@@ -278,13 +253,11 @@ class RiskManager:
         
         self.daily_stats["pnl_pct"] += pnl_pct
         
-        # 🆕 Track consecutive SL (Issue V)
         if pnl_pct < 0 and trade.sl_count_toward_lock:
             self.daily_stats["consecutive_sl"] += 1
             logger.warning("[RISK] SL #%d: %s @ %.2f%%", 
                         self.daily_stats["consecutive_sl"], symbol, pnl_pct)
         else:
-            # Reset consecutive SL on win
             if pnl_pct > 0:
                 if self.daily_stats["consecutive_sl"] > 0:
                     logger.info("[RISK] Consecutive SL reset after win")
@@ -295,7 +268,6 @@ class RiskManager:
         else:
             self.daily_stats["losses"] += 1
         
-        # Record in history
         self.trade_history.append({
             "symbol": symbol,
             "direction": trade.direction,
@@ -309,13 +281,11 @@ class RiskManager:
         logger.info("[RISK] Trade closed: %s @ %.2f | PnL: %.2f%% | Reason: %s",
                    symbol, exit_price, pnl_pct, reason)
         
-        # 🆕 Check if day should lock after this trade
         self.check_day_lock()
         
         return pnl_pct
     
     def check_timeouts(self, current_prices: Dict[str, float]) -> List[str]:
-        """Check for trades held too long."""
         timed_out = []
         now = datetime.now()
         
@@ -330,7 +300,6 @@ class RiskManager:
         return timed_out
     
     def get_stats(self) -> Dict:
-        """Return current stats with lock status."""
         total_closed = self.daily_stats["wins"] + self.daily_stats["losses"]
         win_rate = (self.daily_stats["wins"] / total_closed * 100) if total_closed > 0 else 0
         
@@ -344,7 +313,6 @@ class RiskManager:
         }
     
     def reset_daily(self):
-        """Reset for new day."""
         self.daily_stats = {
             "date": datetime.now().strftime("%Y-%m-%d"),
             "total": 0,
@@ -360,5 +328,4 @@ class RiskManager:
         logger.info("[RISK] Daily reset complete")
 
 
-# Global instance
 risk_manager = RiskManager()
