@@ -80,18 +80,30 @@ def generate_signal(
     logger.info("[SURGICAL] SCAN START: %s", symbol)
     logger.info("=" * 70)
     
-    # Check pending confirmations first
+    # 🆕 GUARD: Check pending confirmations first
     if symbol in _pending_confirmations:
         return _check_confirmation(symbol, ohlcv_15m, risk_mgr, filters)
+    
+    # 🆕 GUARD: Validate BTC data availability (minimum 50 candles for basic analysis)
+    if not btc_ohlcv_15m or len(btc_ohlcv_15m) < 50:
+        logger.error("❌ BLOCK: Insufficient BTC 15m data (need 50, got %s)", 
+                    len(btc_ohlcv_15m) if btc_ohlcv_15m else 0)
+        return None
+    
+    if not btc_ohlcv_1h or len(btc_ohlcv_1h) < 20:
+        logger.error("❌ BLOCK: Insufficient BTC 1h data (need 20, got %s)",
+                    len(btc_ohlcv_1h) if btc_ohlcv_1h else 0)
+        return None
+        
+    if not btc_ohlcv_4h or len(btc_ohlcv_4h) < 20:
+        logger.error("❌ BLOCK: Insufficient BTC 4h data (need 20, got %s)",
+                    len(btc_ohlcv_4h) if btc_ohlcv_4h else 0)
+        return None
     
     # ═════════════════════════════════════════════════════════════════
     # STEP 1: REGIME CHECK (Issue I - Non-negotiable gatekeeper)
     # ═════════════════════════════════════════════════════════════════
     logger.info("[STEP 1] REGIME GATEKEEPER")
-    
-    if not btc_ohlcv_15m or len(btc_ohlcv_15m) < 200:
-        logger.error("❌ BLOCK: Insufficient BTC data")
-        return None
     
     # Analyze BTC regime
     regime_analysis = btc_detector.analyze(btc_ohlcv_15m, btc_ohlcv_1h, btc_ohlcv_4h)
