@@ -1,6 +1,6 @@
 """
-ARUNABHA SMART SIGNAL v3.2
-Critical fixes: account_size consistency, ATR validation, position sizing optimization
+ARUNABHA SMART SIGNAL v3.3
+Conservative Elite Institutional Mode
 """
 
 import logging
@@ -65,10 +65,9 @@ def generate_signal(
     global _pending_confirmations
     
     logger.info("=" * 70)
-    logger.info("[SURGICAL] SCAN START: %s", symbol)
+    logger.info("[ELITE MODE] SCAN START: %s", symbol)
     logger.info("=" * 70)
     
-    # FIX 1: Pass account_size to confirmation check
     if symbol in _pending_confirmations:
         return _check_confirmation(symbol, ohlcv_15m, risk_mgr, filters, fear_index, account_size, mood)
     
@@ -107,14 +106,12 @@ def generate_signal(
     current_price = ohlcv_15m[-1][4]
     atr_pct = (atr / current_price) * 100 if current_price > 0 else 0
     
-    # FIX 2: Validate ATR > 0 to prevent division errors
     if atr <= 0:
         logger.error("❌ BLOCK: ATR invalid (%.4f) - insufficient data", atr)
         return None
     
     logger.info("   ATR%%: %.2f", atr_pct)
     
-    # ATR warning only (block delegated to RiskManager)
     if atr_pct > 4.0:
         logger.warning("   ⚠️ HIGH ATR: %.2f%% - RiskManager will evaluate", atr_pct)
     elif 2.5 <= atr_pct <= 4.0:
@@ -165,26 +162,24 @@ def generate_signal(
     
     logger.info("   Score: %d | Grade: %s | Mode: %s", score, grade, trade_mode)
     
-    # Score thresholds
+    # Elite mode: Stricter thresholds
     if trade_mode == "CHOPPY":
-        min_score = 60
+        min_score = 65  # Increased from 60
         allowed_grades = ["A", "A+"]
     else:
-        min_score = 50
-        allowed_grades = ["A", "A+", "B"]
+        min_score = 55  # Increased from 50
+        allowed_grades = ["A", "A+"]  # FIX 7: Removed B grade completely
     
     if score < min_score:
         logger.error("❌ BLOCK: Score %d < minimum %d for %s mode", score, min_score, trade_mode)
         return None
     
+    # FIX 7: Only Grade A/A+ allowed - B completely blocked
     if grade not in allowed_grades:
-        logger.error("❌ BLOCK: Grade %s not in allowed %s", grade, allowed_grades)
+        logger.error("❌ BLOCK: Grade %s not in allowed %s (Elite Mode: B grade blocked)", grade, allowed_grades)
         return None
     
-    if grade == "B":
-        logger.warning("   ⚠️ Grade B - Acceptable in trend mode")
-    
-    logger.info("✅ SCORE: OK")
+    logger.info("✅ SCORE: OK (Elite Grade: %s)", grade)
     
     logger.info("[STEP 5] RISK MANAGER")
     
@@ -197,14 +192,24 @@ def generate_signal(
         logger.error("❌ BLOCK: Risk manager rejection")
         return None
     
+    # FIX 8: Ensure MIN_RR_RATIO = 2.0 is enforced
     sl_tp = risk_mgr.calculate_sl_tp(direction, current_price, atr, trade_mode)
     
     if sl_tp["rr_ratio"] < config.MIN_RR_RATIO:
-        logger.error("❌ BLOCK: R:R %.2f < %.2f", sl_tp["rr_ratio"], config.MIN_RR_RATIO)
+        logger.error("❌ BLOCK: R:R %.2f < %.2f (Elite Mode)", sl_tp["rr_ratio"], config.MIN_RR_RATIO)
         return None
     
-    # FIX 4: Pre-check position sizing only, don't store result
-    # Actual sizing happens in _finalize_signal for single source of truth
+    # FIX 5: CHOPPY mode TP calculation - volatility adaptive
+    if trade_mode == "CHOPPY":
+        # Remove fixed 0.8% TP, use ATR-based
+        if direction == "LONG":
+            sl_tp["take_profit"] = current_price + (atr * 1.2)
+        else:
+            sl_tp["take_profit"] = current_price - (atr * 1.2)
+        # Recalculate R:R
+        sl_tp["rr_ratio"] = abs(sl_tp["take_profit"] - current_price) / abs(current_price - sl_tp["stop_loss"])
+        logger.info("[ELITE] CHOPPY TP adjusted: ATR×1.2 = %.2f", sl_tp["take_profit"])
+    
     position_check = risk_mgr.calculate_position(account_size, current_price, sl_tp["stop_loss"], atr_pct, fear_index)
     
     if position_check.get("blocked"):
@@ -214,7 +219,6 @@ def generate_signal(
     logger.info("✅ RISK: Pre-check OK | RR %.2f | SL %.2f | TP %.2f",
                sl_tp["rr_ratio"], sl_tp["stop_loss"], sl_tp["take_profit"])
     
-    # Calculate actual filters passed
     filters_passed, filters_total, filters_details, mandatory_pass = filters.evaluate(
         direction=direction,
         ohlcv_15m=ohlcv_15m,
@@ -253,8 +257,9 @@ def generate_signal(
             "atr_pct": atr_pct,
             "structure_strength": engine_result.get("structure_strength", "OK"),
             "fear_index": fear_index,
-            "account_size": account_size,  # FIX 1: Store account_size for confirmation
-            "mood_obj": mood  # FIX 1: Store mood object for confirmation
+            "account_size": account_size,
+            "mood_obj": mood,
+            "atr": atr  # FIX 6: Store ATR for confirmation threshold
         }
         
         return SignalResult(
@@ -264,14 +269,14 @@ def generate_signal(
             stop_loss=sl_tp["stop_loss"],
             take_profit=sl_tp["take_profit"],
             rr_ratio=sl_tp["rr_ratio"],
-            position_size=position_check,  # Pre-check result for display
+            position_size=position_check,
             extreme_fear_score=score,
             extreme_fear_grade=grade,
             filters_passed=filters_passed,
             logic_triggered=engine_result["top_logic"],
             market_mood=mood.get_mood()["emoji"] + " " + mood.get_mood()["mood"],
             session_info=trade_mode,
-            human_insight=f"⏳ PENDING: {trade_mode} mode | Structure: {engine_result.get('structure_strength', 'OK')}",
+            human_insight=f"⏳ PENDING: {trade_mode} mode | Elite Grade {grade} Only",
             confirmation_pending=True,
             confirmation_price=current_price,
             regime_mode=trade_mode,
@@ -279,11 +284,9 @@ def generate_signal(
             structure_strength=engine_result.get("structure_strength", "OK")
         )
     
-    # TREND MODE: Skip confirmation, execute immediately
     if trade_mode == "TREND":
         logger.info("[STEP 6] IMMEDIATE EXECUTION (TREND MODE)")
     
-    # FIX 4: Pass pre-validated parameters to finalize, don't recalculate position here
     return _finalize_signal(
         symbol=symbol,
         direction=direction,
@@ -299,16 +302,15 @@ def generate_signal(
         regime_mode=trade_mode,
         atr_pct=atr_pct,
         fear_index=fear_index,
-        pre_validated_position=position_check  # FIX 4: Pass pre-check result
+        pre_validated_position=position_check
     )
 
 
-# FIX 1: Added account_size and mood parameters
 def _check_confirmation(symbol: str, ohlcv: List[List[float]], 
                        risk_mgr: RiskManager, filters: SimpleFilters,
                        fear_index: int,
-                       account_size: float,  # FIX 1: Added parameter
-                       mood: MarketMood) -> Optional[SignalResult]:  # FIX 1: Added parameter
+                       account_size: float,
+                       mood: MarketMood) -> Optional[SignalResult]:
     
     global _pending_confirmations
     
@@ -319,6 +321,7 @@ def _check_confirmation(symbol: str, ohlcv: List[List[float]],
     current_price = ohlcv[-1][4]
     direction = pending["direction"]
     entry_zone = pending["entry_zone"]
+    atr = pending.get("atr", _calculate_atr(ohlcv))  # FIX 6: Use stored ATR or recalculate
     
     pending["candle_count"] += 1
     
@@ -326,32 +329,43 @@ def _check_confirmation(symbol: str, ohlcv: List[List[float]],
     
     confirmed = False
     
+    # FIX 6: ATR-based confirmation threshold instead of fixed 0.1%
     if direction == "LONG":
-        bullish_close = current_price > entry_zone * 1.001
+        # Was: current_price > entry_zone * 1.001
+        # Now: ATR-based dynamic threshold
+        bullish_close = current_price > entry_zone + (atr * 0.2)
         higher_low = ohlcv[-1][3] > ohlcv[-2][3] if len(ohlcv) > 1 else False
         confirmed = bullish_close and higher_low
-        logger.info("   Price: %.2f > Entry: %.2f | Bullish: %s | HL: %s",
-                   current_price, entry_zone, bullish_close, higher_low)
+        logger.info("   Price: %.2f > Entry+%.2f | Bullish: %s | HL: %s",
+                   current_price, atr * 0.2, bullish_close, higher_low)
     else:
-        bearish_close = current_price < entry_zone * 0.999
+        # Was: current_price < entry_zone * 0.999
+        # Now: ATR-based dynamic threshold
+        bearish_close = current_price < entry_zone - (atr * 0.2)
         lower_high = ohlcv[-1][2] < ohlcv[-2][2] if len(ohlcv) > 1 else False
         confirmed = bearish_close and lower_high
-        logger.info("   Price: %.2f < Entry: %.2f | Bearish: %s | LH: %s",
-                   current_price, entry_zone, bearish_close, lower_high)
+        logger.info("   Price: %.2f < Entry-%.2f | Bearish: %s | LH: %s",
+                   current_price, atr * 0.2, bearish_close, lower_high)
     
     if confirmed:
         logger.info("✅ CONFIRMED after %d candles", pending["candle_count"])
         del _pending_confirmations[symbol]
         
-        # FIX 2: Validate ATR before proceeding
-        atr = _calculate_atr(ohlcv)
+        # Validate ATR before proceeding
         if atr <= 0:
             logger.error("❌ CONFIRMATION FAILED: ATR invalid (%.4f)", atr)
             return None
         
         sl_tp = risk_mgr.calculate_sl_tp(direction, current_price, atr, pending["regime_mode"])
         
-        # FIX 1: Use stored account_size and mood from pending, not hardcoded values
+        # FIX 5: Apply CHOPPY TP adjustment if needed
+        if pending["regime_mode"] == "CHOPPY":
+            if direction == "LONG":
+                sl_tp["take_profit"] = current_price + (atr * 1.2)
+            else:
+                sl_tp["take_profit"] = current_price - (atr * 1.2)
+            sl_tp["rr_ratio"] = abs(sl_tp["take_profit"] - current_price) / abs(current_price - sl_tp["stop_loss"])
+        
         return _finalize_signal(
             symbol=symbol,
             direction=direction,
@@ -367,12 +381,12 @@ def _check_confirmation(symbol: str, ohlcv: List[List[float]],
             mood_data=pending["mood"],
             risk_mgr=risk_mgr,
             filters=filters,
-            account_size=pending["account_size"],  # FIX 1: Use stored account_size
-            mood=pending["mood_obj"],  # FIX 1: Use stored mood object
+            account_size=pending["account_size"],
+            mood=pending["mood_obj"],
             regime_mode=pending["regime_mode"],
             atr_pct=pending["atr_pct"],
             fear_index=pending["fear_index"],
-            pre_validated_position=None  # Will be calculated fresh with current price
+            pre_validated_position=None
         )
     
     elif pending["candle_count"] >= 3:
@@ -385,20 +399,17 @@ def _check_confirmation(symbol: str, ohlcv: List[List[float]],
         return None
 
 
-# FIX 4: Added pre_validated_position parameter to avoid double calculation
 def _finalize_signal(symbol, direction, entry, sl_tp, engine_result, 
                     filters_passed, mood_data, risk_mgr, filters, account_size, mood,
                     regime_mode, atr_pct, fear_index,
-                    pre_validated_position: Optional[Dict] = None):  # FIX 4: Optional pre-validated position
+                    pre_validated_position: Optional[Dict] = None):
     
-    # FIX 4: Use pre-validated position if available and entry matches, otherwise calculate fresh
     if (pre_validated_position and 
         not pre_validated_position.get("blocked") and 
-        abs(pre_validated_position.get("entry", entry) - entry) < 0.01):  # 1 cent tolerance
+        abs(pre_validated_position.get("entry", entry) - entry) < 0.01):
         position = pre_validated_position
         logger.info("[RISK] Using pre-validated position sizing")
     else:
-        # Calculate fresh (for confirmation mode or if entry moved significantly)
         position = risk_mgr.calculate_position(account_size, entry, sl_tp["stop_loss"], atr_pct, fear_index)
         logger.info("[RISK] Calculated fresh position sizing")
     
@@ -425,10 +436,9 @@ def _finalize_signal(symbol, direction, entry, sl_tp, engine_result,
     insight = _build_insight(mood_data, engine_result, filters_passed, direction, regime_mode)
     
     logger.info("=" * 70)
-    logger.info("✅ SIGNAL: %s %s @ %.2f | Mode: %s | Score: %d | RR: %.2f | Filters: %d | Size: $%.2f",
-               symbol, direction, entry, regime_mode, 
-               engine_result["score"], sl_tp["rr_ratio"], filters_passed,
-               position.get("position_usd", 0))
+    logger.info("✅ ELITE SIGNAL: %s %s @ %.2f | Mode: %s | Grade: %s | RR: %.2f | Size: $%.2f",
+               symbol, direction, entry, regime_mode, engine_result["grade"],
+               sl_tp["rr_ratio"], position.get("position_usd", 0))
     logger.info("=" * 70)
     
     return SignalResult(
@@ -458,14 +468,14 @@ def _build_insight(mood: Dict, engine: Dict, filters: int, direction: str, mode:
     
     if isinstance(mood, dict):
         if mood.get("mood") == "EXTREME_FEAR":
-            lines.append("😱 EXTREME_FEAR")
+            lines.append("😱 ELITE_CAUTION")
         elif mood.get("mood") == "FEAR":
-            lines.append("⚠️ FEAR")
+            lines.append("⚠️ SELECTIVE")
     
-    lines.append(f"🎯 Mode: {mode}")
+    lines.append(f"🎯 {mode}")
+    lines.append(f"🏆 Grade: {engine.get('grade', 'A')}")
     lines.append(f"🧠 {', '.join(engine.get('top_logic', [])[:2])}")
     lines.append(f"{'🟢' if direction == 'LONG' else '🔴'} {direction}")
-    lines.append(f"🔍 Filters: {filters}")
     
     return " | ".join(lines)
 
