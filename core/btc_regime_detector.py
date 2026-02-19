@@ -1,6 +1,6 @@
 """
-ARUNABHA BTC REGIME DETECTOR v3.3
-Full institutional-grade with true ADX smoothing
+ARUNABHA BTC REGIME DETECTOR v3.4
+Balanced institutional-grade
 """
 
 import logging
@@ -37,8 +37,7 @@ class RegimeAnalysis:
 
 class BTCRegimeDetector:
     """
-    Full institutional regime detection.
-    True ADX smoothing for less jumpy regime detection.
+    Balanced institutional regime detection.
     """
     
     HARD_BLOCK_CONFIDENCE = 20
@@ -51,15 +50,13 @@ class BTCRegimeDetector:
     CHOPPY_TIER_MIN = 85
     TREND_TIER_MIN = 70
     
-    # 🆕 ADX smoothing history
-    ADX_HISTORY_SIZE = 5  # Keep last 5 ADX values for smoothing
+    ADX_HISTORY_SIZE = 5
     
     def __init__(self):
         self.regime_history: List[BTCRegime] = []
         self.max_history = 10
         self._last_analysis: Optional[RegimeAnalysis] = None
         self._skip_next_cycle = False
-        # 🆕 ADX smoothing buffer
         self._adx_history: List[float] = []
     
     def _calculate_ema(self, values: List[float], period: int) -> float:
@@ -75,18 +72,13 @@ class BTCRegimeDetector:
         return ema
     
     def _calculate_true_adx(self, ohlcv: List, period: int = 14) -> float:
-        """
-        🆕 TRUE ADX with proper smoothing
-        Wilder's smoothing method for institutional-grade stability
-        """
-        if len(ohlcv) < period * 3:  # Need more data for true smoothing
+        if len(ohlcv) < period * 3:
             return 25.0
         
         highs = [c[2] for c in ohlcv]
         lows = [c[3] for c in ohlcv]
         closes = [c[4] for c in ohlcv]
         
-        # Calculate True Range (TR)
         tr_list = []
         for i in range(1, len(ohlcv)):
             tr = max(
@@ -96,7 +88,6 @@ class BTCRegimeDetector:
             )
             tr_list.append(tr)
         
-        # Calculate +DM and -DM
         plus_dm = []
         minus_dm = []
         for i in range(1, len(ohlcv)):
@@ -113,41 +104,33 @@ class BTCRegimeDetector:
             else:
                 minus_dm.append(0)
         
-        # 🆕 WILDER'S SMOOTHING (True ADX)
-        # First values: simple average
+        if len(plus_dm) < period:
+            return 25.0
+        
         atr = sum(tr_list[:period]) / period
         plus_di_sum = sum(plus_dm[:period])
         minus_di_sum = sum(minus_dm[:period])
         
-        # Wilder's smoothing formula: ((prev * (n-1)) + current) / n
         for i in range(period, len(tr_list)):
             atr = ((atr * (period - 1)) + tr_list[i]) / period
             plus_di_sum = ((plus_di_sum * (period - 1)) + plus_dm[i]) / period
             minus_di_sum = ((minus_di_sum * (period - 1)) + minus_dm[i]) / period
         
-        # Calculate DI
         plus_di = (plus_di_sum / atr) * 100 if atr > 0 else 0
         minus_di = (minus_di_sum / atr) * 100 if atr > 0 else 0
         
-        # Calculate DX
         dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100 if (plus_di + minus_di) > 0 else 0
         
-        # 🆕 SMOOTH DX to get TRUE ADX (Wilder's method)
-        # Need DX history for smoothing
         if len(self._adx_history) < 2:
-            # First run: initialize with DX
             adx = dx
         else:
-            # Smooth DX: ((prev_adx * (n-1)) + current_dx) / n
             prev_adx = self._adx_history[-1]
             adx = ((prev_adx * (period - 1)) + dx) / period
         
-        # 🆕 SECOND LAYER: Historical smoothing for stability
         self._adx_history.append(adx)
         if len(self._adx_history) > self.ADX_HISTORY_SIZE:
             self._adx_history.pop(0)
         
-        # Return EMA of ADX history for final polish
         if len(self._adx_history) >= 3:
             final_adx = sum(self._adx_history) / len(self._adx_history)
         else:
@@ -193,7 +176,6 @@ class BTCRegimeDetector:
         momentum_score, momentum_details = self._analyze_momentum(ohlcv_15m, ohlcv_1h)
         vol_score, vol_details = self._analyze_volatility(ohlcv_15m)
         
-        # 🆕 TRUE ADX with smoothing
         adx_value = self._calculate_true_adx(ohlcv_15m)
         
         total_score = (
@@ -500,7 +482,7 @@ class BTCRegimeDetector:
             return 100.0
         return 100 - (100 / (1 + avg_gain / avg_loss))
     
-    def should_trade_alt(self, alt_direction: str, min_confidence: int = 60) -> Tuple[bool, str]:
+    def should_trade_alt(self, alt_direction: str, min_confidence: int = 45) -> Tuple[bool, str]:
         if not self._last_analysis:
             return False, "No analysis"
         
@@ -518,5 +500,4 @@ class BTCRegimeDetector:
         return True, f"{analysis.trade_mode} | {analysis.regime.value} | Need {analysis.tier_requirement} | ADX>{analysis.adx_threshold}"
 
 
-# Global instance
 btc_detector = BTCRegimeDetector()
