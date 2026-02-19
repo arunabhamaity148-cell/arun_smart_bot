@@ -1,6 +1,6 @@
 """
-ARUNABHA EXTREME FEAR BOT v3.0
-Surgical execution engine
+ARUNABHA EXTREME FEAR BOT v3.1
+Surgical execution engine with auto daily reset
 """
 
 import asyncio
@@ -48,19 +48,22 @@ class ArunabhaBot:
             "4h": []
         }
         self.last_btc_update = None
-        self._btc_data_ready = False  # 🆕 Flag to track BTC data readiness
+        self._btc_data_ready = False
         
+        # FIX 3: Track current date for auto reset
+        self._current_date = datetime.now().strftime("%Y-%m-%d")
+    
     async def start(self):
         """Start surgical execution engine."""
         logger.info("=" * 70)
-        logger.info("ARUNABHA SURGICAL EXECUTION ENGINE v3.0")
+        logger.info("ARUNABHA SURGICAL EXECUTION ENGINE v3.1")
         logger.info("=" * 70)
         logger.info("Institutional-grade discipline initialized")
         
         await self.exchange.connect()
         await self.mood.fetch_fear_index()
         
-        # 🆕 CRITICAL: Ensure BTC data is fully loaded BEFORE starting WebSocket
+        # Ensure BTC data is fully loaded BEFORE starting WebSocket
         await self._ensure_btc_data_loaded()
         
         if not self._btc_data_ready:
@@ -79,6 +82,9 @@ class ArunabhaBot:
         
         logger.info("Engine running - All protections active")
         
+        # FIX 3: Start background task for daily reset check
+        reset_task = asyncio.create_task(self._daily_reset_monitor())
+        
         while True:
             await asyncio.sleep(60)
             
@@ -90,9 +96,44 @@ class ArunabhaBot:
             
             await self._check_active_trades()
     
+    # FIX 3: New method to monitor and trigger daily reset
+    async def _daily_reset_monitor(self):
+        """
+        Background task that checks for date change and triggers daily reset.
+        Runs every minute to ensure reset happens at midnight.
+        """
+        while True:
+            try:
+                await asyncio.sleep(60)  # Check every minute
+                
+                current_date = datetime.now().strftime("%Y-%m-%d")
+                
+                if current_date != self._current_date:
+                    logger.info("🌅 DATE CHANGE DETECTED: %s -> %s", self._current_date, current_date)
+                    
+                    # Perform daily reset
+                    self.risk.reset_daily()
+                    self._current_date = current_date
+                    
+                    # Reset cooldowns in filters
+                    self.filters.cooldown_map.clear()
+                    
+                    # Send notification
+                    await self.alerts.send_message(
+                        f"🌅 <b>Daily Reset Complete</b>\n"
+                        f"Date: {current_date}\n"
+                        f"All counters reset. Ready for new trading day."
+                    )
+                    
+                    logger.info("✅ Daily reset completed for %s", current_date)
+                    
+            except Exception as exc:
+                logger.error("Error in daily reset monitor: %s", exc)
+                await asyncio.sleep(300)  # Wait 5 minutes on error before retry
+    
     async def _ensure_btc_data_loaded(self):
         """
-        🆕 NEW: Ensure BTC data is loaded with retries before starting WS
+        Ensure BTC data is loaded with retries before starting WS
         """
         max_retries = 5
         retry_delay = 3  # seconds
@@ -182,16 +223,20 @@ class ArunabhaBot:
         if timeframe != config.TIMEFRAME:
             return
         
-        # 🆕 GUARD: Skip if BTC data not ready
+        # FIX 3: Check for date change on every candle
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        if current_date != self._current_date:
+            logger.info("🌅 Date change detected in candle handler, triggering reset...")
+            # Reset will be handled by _daily_reset_monitor, but we can force it here too
+            self.risk.reset_daily()
+            self._current_date = current_date
+        
+        # Guard: Skip if BTC data not ready
         if not self._btc_data_ready:
             logger.warning(f"[SKIP] {symbol} - BTC data not ready")
             return
         
-        current_date = datetime.now().strftime("%Y-%m-%d")
-        if self.risk.daily_stats["date"] != current_date:
-            self.risk.reset_daily()
-        
-        # 🆕 GUARD: Check BTC cache validity
+        # Guard: Check BTC cache validity
         if not all(self.btc_cache.values()) or len(self.btc_cache["15m"]) < 50:
             logger.warning(f"[SKIP] {symbol} - Insufficient BTC cache")
             return
@@ -200,6 +245,9 @@ class ArunabhaBot:
             ohlcv_5m = await self.exchange.fetch_ohlcv(symbol, "5m", 50)
             ohlcv_1h = await self.exchange.fetch_ohlcv(symbol, "1h", 50)
             funding = 0
+            
+            # FIX: Get account_size from config instead of hardcoded
+            account_size = getattr(config, 'DEFAULT_ACCOUNT_SIZE', 1000)
             
             signal = generate_signal(
                 symbol=symbol,
@@ -211,7 +259,7 @@ class ArunabhaBot:
                 btc_ohlcv_4h=self.btc_cache["4h"],
                 funding_rate=funding,
                 fear_index=self.mood.fear_index,
-                account_size=1000,
+                account_size=account_size,  # Use config value
                 risk_mgr=self.risk,
                 filters=self.filters,
                 engine=self.engine,
@@ -261,13 +309,14 @@ class ArunabhaBot:
         
         return web.json_response({
             "status": "ok" if self._btc_data_ready else "degraded",
-            "version": "3.0-surgical",
+            "version": "3.1-surgical",
             "btc_data_ready": self._btc_data_ready,
             "fear_index": self.mood.fear_index,
             "daily_stats": stats,
             "btc_regime": btc_info,
             "day_locked": stats.get("day_locked"),
-            "lock_reason": stats.get("lock_reason")
+            "lock_reason": stats.get("lock_reason"),
+            "current_date": self._current_date  # FIX 3: Show current tracked date
         })
 
 
