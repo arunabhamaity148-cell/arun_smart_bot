@@ -18,6 +18,8 @@ BINANCE_SECRET = os.getenv("BINANCE_SECRET", "")
 COINDCX_API_KEY = os.getenv("COINDCX_API_KEY", "")
 COINDCX_SECRET = os.getenv("COINDCX_SECRET", "")
 PRIMARY_EXCHANGE = os.getenv("PRIMARY_EXCHANGE", "binance")
+# Account configuration
+DEFAULT_ACCOUNT_SIZE = float(os.getenv("ACCOUNT_SIZE", "1000"))  # Default $1000
 
 # ─── Trading Universe ─────────────────────────────────
 TRADING_PAIRS = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "LINK/USDT", "ADA/USDT"]
