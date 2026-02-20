@@ -1,6 +1,6 @@
 """
-ARUNABHA SMART SIGNAL v3.3
-Conservative Elite Institutional Mode
+ARUNABHA SMART SIGNAL v4.0 - FINAL
+Conservative Elite Institutional Mode - OPTION 3
 """
 
 import logging
@@ -68,21 +68,23 @@ def generate_signal(
     logger.info("[ELITE MODE] SCAN START: %s", symbol)
     logger.info("=" * 70)
     
+    # Check pending confirmations
     if symbol in _pending_confirmations:
         return _check_confirmation(symbol, ohlcv_15m, risk_mgr, filters, fear_index, account_size, mood)
     
-    if not btc_ohlcv_15m or len(btc_ohlcv_15m) < 50:
-        logger.error("❌ BLOCK: Insufficient BTC 15m data (need 50, got %s)", 
+    # BTC data validation
+    if not btc_ohlcv_15m or len(btc_ohlcv_15m) < 30:
+        logger.error("❌ BLOCK: Insufficient BTC 15m data (need 30, got %s)", 
                     len(btc_ohlcv_15m) if btc_ohlcv_15m else 0)
         return None
     
-    if not btc_ohlcv_1h or len(btc_ohlcv_1h) < 20:
-        logger.error("❌ BLOCK: Insufficient BTC 1h data (need 20, got %s)",
+    if not btc_ohlcv_1h or len(btc_ohlcv_1h) < 15:
+        logger.error("❌ BLOCK: Insufficient BTC 1h data (need 15, got %s)",
                     len(btc_ohlcv_1h) if btc_ohlcv_1h else 0)
         return None
         
-    if not btc_ohlcv_4h or len(btc_ohlcv_4h) < 20:
-        logger.error("❌ BLOCK: Insufficient BTC 4h data (need 20, got %s)",
+    if not btc_ohlcv_4h or len(btc_ohlcv_4h) < 15:
+        logger.error("❌ BLOCK: Insufficient BTC 4h data (need 15, got %s)",
                     len(btc_ohlcv_4h) if btc_ohlcv_4h else 0)
         return None
     
@@ -90,9 +92,15 @@ def generate_signal(
     
     regime_analysis = btc_detector.analyze(btc_ohlcv_15m, btc_ohlcv_1h, btc_ohlcv_4h)
     
+    # ===== OPTION 3: CONFIDENCE-BASED ALLOW =====
     if not regime_analysis.can_trade:
-        logger.error("❌ BLOCK: Regime gate - %s", regime_analysis.block_reason)
-        return None
+        # confidence ভালো থাকলে ট্রেড করতে দেবে
+        if regime_analysis.confidence >= 25:
+            logger.warning("⚠️ Regime gate says BLOCK but confidence %d%% - allowing", 
+                          regime_analysis.confidence)
+        else:
+            logger.error("❌ BLOCK: Regime gate - %s", regime_analysis.block_reason)
+            return None
     
     trade_mode = regime_analysis.trade_mode
     
@@ -138,19 +146,28 @@ def generate_signal(
         logger.error("❌ BLOCK: Structure not confirmed")
         return None
     
-    if engine_result.get("structure_weak"):
-        logger.error("❌ BLOCK: Structure weak - no BOS/CHoCH")
+    if engine_result.get("structure_weak") and engine_result["score"] < 20:
+        logger.error("❌ BLOCK: Structure weak and low score")
         return None
     
     direction = engine_result["direction"]
     
+    # Direction check for trend mode
     if trade_mode == "TREND":
         if regime_analysis.regime in [BTCRegime.STRONG_BULL, BTCRegime.BULL] and direction != "LONG":
-            logger.error("❌ BLOCK: Direction mismatch - BTC bull but SHORT signal")
-            return None
+            if regime_analysis.confidence < 30:
+                logger.error("❌ BLOCK: Direction mismatch - BTC bull but SHORT signal")
+                return None
+            else:
+                logger.warning("⚠️ Direction mismatch but confidence %d%% - allowing", 
+                              regime_analysis.confidence)
         if regime_analysis.regime in [BTCRegime.STRONG_BEAR, BTCRegime.BEAR] and direction != "SHORT":
-            logger.error("❌ BLOCK: Direction mismatch - BTC bear but LONG signal")
-            return None
+            if regime_analysis.confidence < 30:
+                logger.error("❌ BLOCK: Direction mismatch - BTC bear but LONG signal")
+                return None
+            else:
+                logger.warning("⚠️ Direction mismatch but confidence %d%% - allowing",
+                              regime_analysis.confidence)
     
     logger.info("✅ STRUCTURE: %s | Direction: %s", 
                engine_result.get("structure_strength", "OK"), direction)
@@ -162,24 +179,22 @@ def generate_signal(
     
     logger.info("   Score: %d | Grade: %s | Mode: %s", score, grade, trade_mode)
     
-    # Elite mode: Stricter thresholds
-    if trade_mode == "CHOPPY":
-        min_score = 65  # Increased from 60
-        allowed_grades = ["A", "A+"]
-    else:
-        min_score = 55  # Increased from 50
-        allowed_grades = ["A", "A+"]  # FIX 7: Removed B grade completely
+    # Get market-specific thresholds from adaptive engine
+    from core.adaptive_engine import adaptive_engine
+    market_config = adaptive_engine.get_params()
+    
+    min_score = market_config.get("min_score", 20)
     
     if score < min_score:
         logger.error("❌ BLOCK: Score %d < minimum %d for %s mode", score, min_score, trade_mode)
         return None
     
-    # FIX 7: Only Grade A/A+ allowed - B completely blocked
-    if grade not in allowed_grades:
-        logger.error("❌ BLOCK: Grade %s not in allowed %s (Elite Mode: B grade blocked)", grade, allowed_grades)
+    # Grade validation (OPTION 3: C grade allowed if score good)
+    if grade == "C" and score < 30:
+        logger.error("❌ BLOCK: Grade C with low score")
         return None
     
-    logger.info("✅ SCORE: OK (Elite Grade: %s)", grade)
+    logger.info("✅ SCORE: OK")
     
     logger.info("[STEP 5] RISK MANAGER")
     
@@ -192,21 +207,19 @@ def generate_signal(
         logger.error("❌ BLOCK: Risk manager rejection")
         return None
     
-    # FIX 8: Ensure MIN_RR_RATIO = 2.0 is enforced
+    # Calculate SL/TP
     sl_tp = risk_mgr.calculate_sl_tp(direction, current_price, atr, trade_mode)
     
     if sl_tp["rr_ratio"] < config.MIN_RR_RATIO:
-        logger.error("❌ BLOCK: R:R %.2f < %.2f (Elite Mode)", sl_tp["rr_ratio"], config.MIN_RR_RATIO)
+        logger.error("❌ BLOCK: R:R %.2f < %.2f", sl_tp["rr_ratio"], config.MIN_RR_RATIO)
         return None
     
-    # FIX 5: CHOPPY mode TP calculation - volatility adaptive
+    # Choppy mode TP adjustment
     if trade_mode == "CHOPPY":
-        # Remove fixed 0.8% TP, use ATR-based
         if direction == "LONG":
             sl_tp["take_profit"] = current_price + (atr * 1.2)
         else:
             sl_tp["take_profit"] = current_price - (atr * 1.2)
-        # Recalculate R:R
         sl_tp["rr_ratio"] = abs(sl_tp["take_profit"] - current_price) / abs(current_price - sl_tp["stop_loss"])
         logger.info("[ELITE] CHOPPY TP adjusted: ATR×1.2 = %.2f", sl_tp["take_profit"])
     
@@ -219,6 +232,7 @@ def generate_signal(
     logger.info("✅ RISK: Pre-check OK | RR %.2f | SL %.2f | TP %.2f",
                sl_tp["rr_ratio"], sl_tp["stop_loss"], sl_tp["take_profit"])
     
+    # Apply filters
     filters_passed, filters_total, filters_details, mandatory_pass = filters.evaluate(
         direction=direction,
         ohlcv_15m=ohlcv_15m,
@@ -231,12 +245,12 @@ def generate_signal(
         ema200_passed=engine_result.get("ema200_passed", False)
     )
     
-    if config.MIN_FILTERS_PASS > 0 and filters_passed < config.MIN_FILTERS_PASS:
+    if filters_passed < market_config.get("min_filters", 2):
         logger.error("❌ BLOCK: Filters %d/%d passed, minimum %d required", 
-                    filters_passed, filters_total, config.MIN_FILTERS_PASS)
+                    filters_passed, filters_total, market_config.get("min_filters", 2))
         return None
     
-    # Mode-aware confirmation
+    # Entry confirmation for choppy mode
     if config.ENTRY_CONFIRMATION_WAIT and trade_mode == "CHOPPY":
         logger.info("[STEP 6] ENTRY CONFIRMATION PENDING (CHOPPY MODE)")
         
@@ -259,7 +273,7 @@ def generate_signal(
             "fear_index": fear_index,
             "account_size": account_size,
             "mood_obj": mood,
-            "atr": atr  # FIX 6: Store ATR for confirmation threshold
+            "atr": atr
         }
         
         return SignalResult(
@@ -276,7 +290,7 @@ def generate_signal(
             logic_triggered=engine_result["top_logic"],
             market_mood=mood.get_mood()["emoji"] + " " + mood.get_mood()["mood"],
             session_info=trade_mode,
-            human_insight=f"⏳ PENDING: {trade_mode} mode | Elite Grade {grade} Only",
+            human_insight=f"⏳ PENDING: {trade_mode} mode",
             confirmation_pending=True,
             confirmation_price=current_price,
             regime_mode=trade_mode,
@@ -321,7 +335,7 @@ def _check_confirmation(symbol: str, ohlcv: List[List[float]],
     current_price = ohlcv[-1][4]
     direction = pending["direction"]
     entry_zone = pending["entry_zone"]
-    atr = pending.get("atr", _calculate_atr(ohlcv))  # FIX 6: Use stored ATR or recalculate
+    atr = pending.get("atr", _calculate_atr(ohlcv))
     
     pending["candle_count"] += 1
     
@@ -329,18 +343,14 @@ def _check_confirmation(symbol: str, ohlcv: List[List[float]],
     
     confirmed = False
     
-    # FIX 6: ATR-based confirmation threshold instead of fixed 0.1%
+    # ATR-based confirmation
     if direction == "LONG":
-        # Was: current_price > entry_zone * 1.001
-        # Now: ATR-based dynamic threshold
         bullish_close = current_price > entry_zone + (atr * 0.2)
         higher_low = ohlcv[-1][3] > ohlcv[-2][3] if len(ohlcv) > 1 else False
         confirmed = bullish_close and higher_low
         logger.info("   Price: %.2f > Entry+%.2f | Bullish: %s | HL: %s",
                    current_price, atr * 0.2, bullish_close, higher_low)
     else:
-        # Was: current_price < entry_zone * 0.999
-        # Now: ATR-based dynamic threshold
         bearish_close = current_price < entry_zone - (atr * 0.2)
         lower_high = ohlcv[-1][2] < ohlcv[-2][2] if len(ohlcv) > 1 else False
         confirmed = bearish_close and lower_high
@@ -351,14 +361,12 @@ def _check_confirmation(symbol: str, ohlcv: List[List[float]],
         logger.info("✅ CONFIRMED after %d candles", pending["candle_count"])
         del _pending_confirmations[symbol]
         
-        # Validate ATR before proceeding
         if atr <= 0:
             logger.error("❌ CONFIRMATION FAILED: ATR invalid (%.4f)", atr)
             return None
         
         sl_tp = risk_mgr.calculate_sl_tp(direction, current_price, atr, pending["regime_mode"])
         
-        # FIX 5: Apply CHOPPY TP adjustment if needed
         if pending["regime_mode"] == "CHOPPY":
             if direction == "LONG":
                 sl_tp["take_profit"] = current_price + (atr * 1.2)
