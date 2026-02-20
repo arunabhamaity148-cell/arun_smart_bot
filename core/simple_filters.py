@@ -1,6 +1,6 @@
 """
-ARUNABHA SIMPLE FILTERS v2.3
-Balanced filtering - removed double enforcement
+ARUNABHA SIMPLE FILTERS v2.4
+Balanced filtering - UPDATED FOR LIVE MARKET
 """
 
 import logging
@@ -15,12 +15,12 @@ logger = logging.getLogger(__name__)
 
 class SimpleFilters:
    """
-   6 balanced filters - structure validation removed (handled by engine)
+   6 balanced filters - UPDATED: Lowered thresholds for live trading
    """
    
    def __init__(self):
        self.cooldown_map = {}
-       self.btc_min_confidence = 45  # 🆕 Reduced from 60
+       self.btc_min_confidence = 30  # 🆕 45 থেকে কমিয়ে 30
        
    def evaluate(self,
                 direction: str,
@@ -34,6 +34,7 @@ class SimpleFilters:
                 ema200_passed: bool = False) -> Tuple[int, int, Dict[str, Any], bool]:
        """
        Return: (passed, total, details, mandatory_pass)
+       UPDATED: More lenient mandatory requirements
        """
        results = {}
        
@@ -85,20 +86,18 @@ class SimpleFilters:
            "msg": "Ready" if cool_ok else "Waiting"
        }
        
-       # 🆕 REMOVED: Structure validation (handled by ExtremeFearEngine)
-       # 🆕 REMOVED: EMA200 mandatory (handled by ExtremeFearEngine)
-       
        # Calculate
        passed = sum(1 for r in results.values() if r["pass"])
        total = len(results)
        
-       # Balanced: Must pass Session, BTC, MTF
-       mandatory_pass = session_ok and btc_ok and mtf_ok
+       # UPDATED: Mandatory now requires at least 2 of 3 (session, btc, mtf)
+       mandatory_count = sum([session_ok, btc_ok, mtf_ok])
+       mandatory_pass = mandatory_count >= 2  # Was: session_ok and btc_ok and mtf_ok
        
        logger.info(
-           "Filters %s: %d/%d | Mandatory: %s | BTC:%s",
-           symbol, passed, total, mandatory_pass,
-           "✅" if btc_ok else "❌"
+           "Filters %s: %d/%d | Mandatory: %s (%d/3) | BTC:%s",
+           symbol, passed, total, "✅" if mandatory_pass else "❌", 
+           mandatory_count, "✅" if btc_ok else "❌"
        )
        
        return passed, total, results, mandatory_pass
@@ -108,10 +107,10 @@ class SimpleFilters:
                          btc_1h: List, 
                          btc_4h: List) -> Tuple[bool, str]:
        """
-       BTC Regime Detection with confidence 45
+       BTC Regime Detection with lower confidence requirement
        """
-       if not btc_15m or len(btc_15m) < 200:
-           return False, "No BTC data (need 200 candles)"
+       if not btc_15m or len(btc_15m) < 50:  # 200 থেকে কমিয়ে 50
+           return True, "⚠️ Limited BTC data - allowing"  # Block না করে allow
        
        analysis = btc_detector.analyze(btc_15m, btc_1h, btc_4h)
        
@@ -127,63 +126,70 @@ class SimpleFilters:
        if can_trade:
            return True, f"✅ BTC {regime_name} ({confidence}%, {consistency}) - {reason}"
        else:
+           # UPDATED: Even if can_trade false, allow if confidence > 20
+           if confidence >= 20:
+               return True, f"⚠️ BTC {regime_name} ({confidence}%) - allowing anyway"
            return False, f"❌ BTC {regime_name} ({confidence}%, {consistency}) - {reason}"
    
    def _check_session_strict(self, ohlcv: List[List[float]]) -> Tuple[bool, str]:
-       """Volume and volatility check"""
-       if len(ohlcv) < 10:
-           return False, "No data"
+       """Volume and volatility check - UPDATED: More lenient"""
+       if len(ohlcv) < 5:  # 10 থেকে কমিয়ে 5
+           return True, "No data - allowing"
            
-       volumes = [c[5] for c in ohlcv[-10:]]
-       avg_vol = sum(volumes[:-1]) / len(volumes[:-1])
+       volumes = [c[5] for c in ohlcv[-5:]]  # 10 থেকে কমিয়ে 5
+       avg_vol = sum(volumes[:-1]) / (len(volumes)-1) if len(volumes) > 1 else volumes[0]
        last_vol = volumes[-1]
        
-       atr = self._calculate_atr(ohlcv[-10:])
+       atr = self._calculate_atr(ohlcv[-5:])  # 10 থেকে কমিয়ে 5
        current_price = ohlcv[-1][4]
        atr_pct = (atr / current_price) * 100 if current_price > 0 else 0
        
-       volume_ok = last_vol > avg_vol * 0.8
-       atr_ok = atr_pct > 0.3
+       # UPDATED: More lenient thresholds
+       volume_ok = last_vol > avg_vol * 0.5  # 0.8 থেকে কমিয়ে 0.5
+       atr_ok = atr_pct > 0.2  # 0.3 থেকে কমিয়ে 0.2
        
-       if not volume_ok and not atr_ok:
-           return False, f"❌ QUIET: Vol {last_vol/avg_vol:.1f}x, ATR {atr_pct:.2f}%"
-       elif not volume_ok:
-           return False, f"❌ Low Volume: {last_vol/avg_vol:.1f}x"
-       elif not atr_ok:
-           return False, f"❌ Low Volatility: ATR {atr_pct:.2f}%"
-       
-       return True, f"✅ Active: Vol {last_vol/avg_vol:.1f}x, ATR {atr_pct:.2f}%"
+       if volume_ok and atr_ok:
+           return True, f"✅ Active: Vol {last_vol/avg_vol:.1f}x, ATR {atr_pct:.2f}%"
+       elif volume_ok or atr_ok:
+           return True, f"⚠️ Partial: Vol {last_vol/avg_vol:.1f}x, ATR {atr_pct:.2f}%"
+       else:
+           return False, f"❌ Quiet: Vol {last_vol/avg_vol:.1f}x, ATR {atr_pct:.2f}%"
    
    def _check_mtf(self, direction: str, ohlcv_1h: List[List[float]]) -> bool:
-       """1h timeframe confirms"""
-       if not ohlcv_1h or len(ohlcv_1h) < 21:
+       """1h timeframe confirms - UPDATED: More lenient"""
+       if not ohlcv_1h or len(ohlcv_1h) < 10:  # 21 থেকে কমিয়ে 10
            return True
            
-       closes = [c[4] for c in ohlcv_1h[-21:]]
-       ema9 = sum(closes[-9:]) / 9
-       ema21 = sum(closes[-21:]) / 21
+       closes = [c[4] for c in ohlcv_1h[-10:]]  # 21 থেকে কমিয়ে 10
+       ema5 = sum(closes[-5:]) / 5  # 9 থেকে কমিয়ে 5
+       ema10 = sum(closes[-10:]) / 10  # 21 থেকে কমিয়ে 10
        
-       h1_bullish = ema9 > ema21
+       h1_bullish = ema5 > ema10
+       
+       # Check simple trend as fallback
+       price_trend = closes[-1] > closes[0]
        
        if direction == "LONG":
-           return h1_bullish
+           return h1_bullish or price_trend
        else:
-           return not h1_bullish
+           return (not h1_bullish) or (not price_trend)
    
    def _check_liquidity(self, direction: str, ohlcv: List[List[float]]) -> bool:
-       """Near support/resistance"""
-       if len(ohlcv) < 20:
+       """Near support/resistance - UPDATED: Wider range"""
+       if len(ohlcv) < 10:  # 20 থেকে কমিয়ে 10
            return True
            
        current = ohlcv[-1][4]
-       highs = [c[2] for c in ohlcv[-20:]]
-       lows = [c[3] for c in ohlcv[-20:]]
+       highs = [c[2] for c in ohlcv[-10:]]
+       lows = [c[3] for c in ohlcv[-10:]]
        
        recent_high = max(highs)
        recent_low = min(lows)
+       range_size = recent_high - recent_low
        
-       near_support = current < recent_low + (recent_high - recent_low) * 0.2
-       near_resistance = current > recent_high - (recent_high - recent_low) * 0.2
+       # UPDATED: Wider zone (30% instead of 20%)
+       near_support = current < recent_low + range_size * 0.3
+       near_resistance = current > recent_high - range_size * 0.3
        
        if direction == "LONG":
            return near_support
@@ -191,9 +197,10 @@ class SimpleFilters:
            return near_resistance
    
    def _check_funding(self, direction: str, funding_rate: float) -> bool:
-       """Not extreme funding"""
-       extreme_long = funding_rate > 0.001
-       extreme_short = funding_rate < -0.001
+       """Not extreme funding - UPDATED: More lenient"""
+       # UPDATED: Higher thresholds
+       extreme_long = funding_rate > 0.002  # 0.001 থেকে বাড়িয়ে 0.002
+       extreme_short = funding_rate < -0.002  # -0.001 থেকে কমিয়ে -0.002
        
        if direction == "LONG" and extreme_long:
            return False
@@ -203,7 +210,7 @@ class SimpleFilters:
        return True
    
    def _check_cooldown(self, symbol: str) -> bool:
-       """30 min cooldown"""
+       """30 min cooldown - keeping as is"""
        if symbol not in self.cooldown_map:
            return True
            
