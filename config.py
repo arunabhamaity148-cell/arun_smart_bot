@@ -40,7 +40,13 @@ RISK_PER_TRADE = 1.0  # 1% = ₹1000 risk per trade
 MAX_LEVERAGE = 15  # You'll use manually
 
 # ======================================================
-# CONFIDENCE THRESHOLDS (was magic numbers)
+# TRADE LIMITS - FIXED: যোগ করা হয়েছে
+# ======================================================
+MAX_CONCURRENT = 1           # একসাথে কতগুলো ট্রেড নেবেন
+MAX_SIGNALS_DAY = 6          # দিনে কতগুলো সিগন্যাল নেবেন
+
+# ======================================================
+# CONFIDENCE THRESHOLDS
 # ======================================================
 CONFIDENCE = {
     "MIN_CONFIDENCE_ALLOW": 25,      # ২৫% কনফিডেন্স থাকলে ট্রেড করতে দেবে
@@ -125,6 +131,17 @@ AVOID_TIMES = [
 ]
 
 # ======================================================
+# CRASH MODE SETTINGS (খারাপ মার্কেটের জন্য)
+# ======================================================
+CRASH_MODE = {
+    "ACTIVE": False,  # True করলে ক্র্যাশ মোড চালু হবে
+    "MIN_CONFIDENCE": 15,
+    "RISK_MULTIPLIER": 0.5,
+    "MAX_POSITION_SIZE": 0.3,
+    "PREFER_SHORTS": True
+}
+
+# ======================================================
 # PROFIT CALCULATION (Indian Exchange)
 # ======================================================
 def calculate_indian_profit(entry: float, exit: float, qty: float, side: str) -> Dict[str, float]:
@@ -147,5 +164,3 @@ def calculate_indian_profit(entry: float, exit: float, qty: float, side: str) ->
         "gst": round(gst, 2),
         "net_pnl": round(net_pnl, 2)
     }
-# কোথাও নিচের দিকে যোগ করুন
-MAX_SIGNALS_DAY = 6  # অথবা MARKET_CONFIGS থেকে নিতে পারেন
