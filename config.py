@@ -37,7 +37,9 @@ PRIMARY_TF = "15m"
 # ======================================================
 ACCOUNT_SIZE = 100000  # ₹1,00,000
 RISK_PER_TRADE = 1.0  # 1% = ₹1000 risk per trade
-LEVERAGE = 15  # Max leverage
+RISK_PCT = 1.0        # RISK_PCT যোগ করুন (একই ভ্যালু)
+LEVERAGE = 15
+MAX_LEVERAGE = 15     # MAX_LEVERAGE ও যোগ করুন
 
 # ======================================================
 # TRADE LIMITS
