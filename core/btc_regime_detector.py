@@ -1,5 +1,5 @@
 """
-ARUNABHA BTC REGIME DETECTOR v3.6 - PART 1/3
+ARUNABHA BTC REGIME DETECTOR v3.6 - COMPLETE FIXED VERSION
 Conservative Elite Institutional Mode - UPDATED FOR LIVE MARKET
 """
 
@@ -41,16 +41,15 @@ class BTCRegimeDetector:
     UPDATED: Lowered thresholds for live market trading
     """
     
-    # FIX 1: Lowered thresholds for live market (was 20, 40)
-    HARD_BLOCK_CONFIDENCE = 10        # 20 → 10
-    CHOPPY_MIN_CONFIDENCE = 20        # 30 → 20
-    TREND_MIN_CONFIDENCE = 25          # 40 → 25
+    HARD_BLOCK_CONFIDENCE = 10
+    CHOPPY_MIN_CONFIDENCE = 20
+    TREND_MIN_CONFIDENCE = 25
     
-    CHOPPY_ADX_MIN = 20                # 28 → 20
-    TREND_ADX_MIN = 18                  # 25 → 18
+    CHOPPY_ADX_MIN = 20
+    TREND_ADX_MIN = 18
     
-    CHOPPY_TIER_MIN = 70                # 85 → 70
-    TREND_TIER_MIN = 50                  # 70 → 50
+    CHOPPY_TIER_MIN = 70
+    TREND_TIER_MIN = 50
     
     ADX_HISTORY_SIZE = 5
     
@@ -139,13 +138,7 @@ class BTCRegimeDetector:
             final_adx = adx
         
         return final_adx
-"""
-ARUNABHA BTC REGIME DETECTOR v3.6 - PART 2/3
-Conservative Elite Institutional Mode - UPDATED FOR LIVE MARKET
-"""
-
-# এই ফাইলটি PART 1-এর পর যুক্ত করতে হবে
-
+    
     def _get_ema_signals(self, ohlcv: List, name: str) -> Dict:
         if len(ohlcv) < 50:
             if len(ohlcv) < 20:
@@ -299,13 +292,7 @@ Conservative Elite Institutional Mode - UPDATED FOR LIVE MARKET
             return True, "TREND", None, f"Tier1-{self.TREND_TIER_MIN}+", self.TREND_ADX_MIN
         
         return False, "BLOCK", f"Unhandled regime: {regime.value}", "N/A", 0
-"""
-ARUNABHA BTC REGIME DETECTOR v3.6 - PART 3/3
-Conservative Elite Institutional Mode - UPDATED FOR LIVE MARKET
-"""
-
-# এই ফাইলটি PART 2-এর পর যুক্ত করতে হবে
-
+    
     def _analyze_ema_structure(self, tf15: List, tf1h: List, tf4h: List) -> Tuple[int, Dict]:
         score = 0
         details = {}
@@ -537,5 +524,4 @@ Conservative Elite Institutional Mode - UPDATED FOR LIVE MARKET
         return True, f"{analysis.trade_mode} | {analysis.regime.value} | Need {analysis.tier_requirement} | ADX>{analysis.adx_threshold}"
 
 
-# Global instance
 btc_detector = BTCRegimeDetector()
