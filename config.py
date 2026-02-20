@@ -40,10 +40,17 @@ RISK_PER_TRADE = 1.0  # 1% = ₹1000 risk per trade
 MAX_LEVERAGE = 15  # You'll use manually
 
 # ======================================================
-# TRADE LIMITS - FIXED: যোগ করা হয়েছে
+# TRADE LIMITS
 # ======================================================
 MAX_CONCURRENT = 1           # একসাথে কতগুলো ট্রেড নেবেন
 MAX_SIGNALS_DAY = 6          # দিনে কতগুলো সিগন্যাল নেবেন
+
+# ======================================================
+# ATR SETTINGS (CRITICAL - যোগ করা হলো)
+# ======================================================
+ATR_SL_MULT = 1.5        # Stop Loss multiplier (TRENDING mode)
+ATR_TP_MULT = 3.0        # Take Profit multiplier (TRENDING mode)
+ATR_PERIOD = 14          # ATR period
 
 # ======================================================
 # CONFIDENCE THRESHOLDS
@@ -99,7 +106,6 @@ EMA_FAST = 9
 EMA_SLOW = 21
 EMA_TREND = 200
 VOLUME_MULT = 1.2
-ATR_PERIOD = 14
 
 # ======================================================
 # TRADE MANAGEMENT
