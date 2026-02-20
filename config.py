@@ -147,3 +147,5 @@ def calculate_indian_profit(entry: float, exit: float, qty: float, side: str) ->
         "gst": round(gst, 2),
         "net_pnl": round(net_pnl, 2)
     }
+# কোথাও নিচের দিকে যোগ করুন
+MAX_SIGNALS_DAY = 6  # অথবা MARKET_CONFIGS থেকে নিতে পারেন
