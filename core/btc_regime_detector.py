@@ -40,9 +40,9 @@ class BTCRegimeDetector:
     CHOPPY_MIN_CONFIDENCE = 15
     TREND_MIN_CONFIDENCE = 20
     
-    # ADX THRESHOLDS
-    CHOPPY_ADX_MIN = 18
-    TREND_ADX_MIN = 20  # 16 থেকে বাড়িয়ে 20
+    # ADX THRESHOLDS - FIXED: 20 → 15 (চপি মার্কেটের জন্য)
+    CHOPPY_ADX_MIN = 15        # 18 → 15
+    TREND_ADX_MIN = 15          # 20 → 15 (কমিয়ে দেওয়া হয়েছে)
     
     CHOPPY_TIER_MIN = 60
     TREND_TIER_MIN = 45
@@ -64,13 +64,13 @@ class BTCRegimeDetector:
         momentum_score, momentum_details = self._analyze_momentum(ohlcv_15m, ohlcv_1h)
         vol_score, vol_details = self._analyze_volatility(ohlcv_15m)
         
-        # IMPROVED: Use shared ADX calculator
+        # Use shared ADX calculator
         adx_value = calculate_adx(ohlcv_15m)
         
         total_score = (ema_score * 0.35 + structure_score * 0.30 + 
                       momentum_score * 0.20 + vol_score * 0.15)
         
-        regime, confidence = self._classify_regime(total_score, adx_value)  # ADX passed
+        regime, confidence = self._classify_regime(total_score, adx_value)
         consistency = self._check_consistency()
         
         can_trade, trade_mode, block_reason, tier_req, adx_thresh = self._apply_balanced_rules(
@@ -117,12 +117,10 @@ class BTCRegimeDetector:
         return analysis
     
     def _classify_regime(self, total_score: float, adx: float) -> Tuple[BTCRegime, int]:
-        """
-        IMPROVED: ADX-ভিত্তিক কনফিডেন্স ক্যালকুলেশন
-        """
+        """ADX-ভিত্তিক কনফিডেন্স ক্যালকুলেশন"""
         abs_score = abs(total_score)
         
-        # ADX-ভিত্তিক কনফিডেন্স (market_detector-এর মতো)
+        # ADX-ভিত্তিক কনফিডেন্স
         if adx > 25:
             adx_confidence = min(100, int(adx * 2.5))
         elif adx > 20:
@@ -145,6 +143,42 @@ class BTCRegimeDetector:
             return BTCRegime.BEAR, trend_confidence
         else:
             return BTCRegime.CHOPPY, choppy_confidence
+    
+    def _apply_balanced_rules(self, regime: BTCRegime, confidence: int, consistency: str, 
+                              adx: float, vol_details: Dict) -> Tuple[bool, str, Optional[str], str, float]:
+        
+        if consistency == "CHANGING":
+            if not self._skip_next_cycle:
+                self._skip_next_cycle = True
+                return False, "WAIT", "Regime CHANGING - skipping 1 cycle", "N/A", 0
+            else:
+                self._skip_next_cycle = False
+        
+        if confidence < self.HARD_BLOCK_CONFIDENCE:
+            return False, "BLOCK", f"Confidence {confidence}% < {self.HARD_BLOCK_CONFIDENCE}%", "N/A", 0
+        
+        if regime == BTCRegime.UNKNOWN:
+            return False, "BLOCK", "Unknown regime", "N/A", 0
+        
+        if regime == BTCRegime.CHOPPY:
+            if confidence < self.CHOPPY_MIN_CONFIDENCE:
+                return False, "BLOCK", f"CHOPPY + Low confidence {confidence}%", "N/A", 0
+            if adx < self.CHOPPY_ADX_MIN:
+                return False, "BLOCK", f"CHOPPY + Weak ADX {adx:.1f} < {self.CHOPPY_ADX_MIN}", f"Tier{self.CHOPPY_TIER_MIN}+", self.CHOPPY_ADX_MIN
+            return True, "RANGE", None, f"Tier{self.CHOPPY_TIER_MIN}+", self.CHOPPY_ADX_MIN
+        
+        if regime in [BTCRegime.BEAR, BTCRegime.BULL, BTCRegime.STRONG_BEAR, BTCRegime.STRONG_BULL]:
+            if confidence < self.TREND_MIN_CONFIDENCE:
+                return False, "BLOCK", f"{regime.value} + Low confidence {confidence}% < {self.TREND_MIN_CONFIDENCE}%", "N/A", 0
+            if adx < self.TREND_ADX_MIN:
+                # FIXED: ADX কম হলেও কনফিডেন্স ভালো থাকলে অ্যালাউ
+                if confidence >= 30:
+                    logger.warning(f"⚠️ ADX {adx:.1f} < {self.TREND_ADX_MIN} but confidence {confidence}% - allowing")
+                    return True, "TREND", None, f"Tier{self.TREND_TIER_MIN}+", self.TREND_ADX_MIN
+                return False, "BLOCK", f"{regime.value} + Weak ADX {adx:.1f} < {self.TREND_ADX_MIN}", f"Tier{self.TREND_TIER_MIN}+", self.TREND_ADX_MIN
+            return True, "TREND", None, f"Tier{self.TREND_TIER_MIN}+", self.TREND_ADX_MIN
+        
+        return False, "BLOCK", f"Unhandled regime: {regime.value}", "N/A", 0
     
     def _get_ema_signals(self, ohlcv: List, name: str) -> Dict:
         if len(ohlcv) < 30:
@@ -187,38 +221,6 @@ class BTCRegimeDetector:
             "dist_200_pct": dist_200_pct,
             "alignment_score": alignment_score
         }
-    
-    def _apply_balanced_rules(self, regime: BTCRegime, confidence: int, consistency: str, 
-                              adx: float, vol_details: Dict) -> Tuple[bool, str, Optional[str], str, float]:
-        
-        if consistency == "CHANGING":
-            if not self._skip_next_cycle:
-                self._skip_next_cycle = True
-                return False, "WAIT", "Regime CHANGING - skipping 1 cycle", "N/A", 0
-            else:
-                self._skip_next_cycle = False
-        
-        if confidence < self.HARD_BLOCK_CONFIDENCE:
-            return False, "BLOCK", f"Confidence {confidence}% < {self.HARD_BLOCK_CONFIDENCE}%", "N/A", 0
-        
-        if regime == BTCRegime.UNKNOWN:
-            return False, "BLOCK", "Unknown regime", "N/A", 0
-        
-        if regime == BTCRegime.CHOPPY:
-            if confidence < self.CHOPPY_MIN_CONFIDENCE:
-                return False, "BLOCK", f"CHOPPY + Low confidence {confidence}%", "N/A", 0
-            if adx < self.CHOPPY_ADX_MIN:
-                return False, "BLOCK", f"CHOPPY + Weak ADX {adx:.1f}", f"Tier{self.CHOPPY_TIER_MIN}+", self.CHOPPY_ADX_MIN
-            return True, "RANGE", None, f"Tier{self.CHOPPY_TIER_MIN}+", self.CHOPPY_ADX_MIN
-        
-        if regime in [BTCRegime.BEAR, BTCRegime.BULL, BTCRegime.STRONG_BEAR, BTCRegime.STRONG_BULL]:
-            if confidence < self.TREND_MIN_CONFIDENCE:
-                return False, "BLOCK", f"{regime.value} + Low confidence {confidence}%", "N/A", 0
-            if adx < self.TREND_ADX_MIN:
-                return False, "BLOCK", f"{regime.value} + Weak ADX {adx:.1f}", f"Tier{self.TREND_TIER_MIN}+", self.TREND_ADX_MIN
-            return True, "TREND", None, f"Tier{self.TREND_TIER_MIN}+", self.TREND_ADX_MIN
-        
-        return False, "BLOCK", f"Unhandled regime: {regime.value}", "N/A", 0
     
     def _analyze_ema_structure(self, tf15: List, tf1h: List, tf4h: List) -> Tuple[int, Dict]:
         score = 0
@@ -373,20 +375,20 @@ class BTCRegimeDetector:
             return False, "No analysis"
         analysis = self._last_analysis
         if analysis.confidence < min_confidence:
-            if analysis.details.get("adx", 0) >= 25 and analysis.confidence >= 15:
+            if analysis.details.get("adx", 0) >= 18 and analysis.confidence >= 15:
                 return True, f"Allowing with ADX {analysis.details.get('adx', 0):.1f} despite low confidence"
             return False, f"Confidence {analysis.confidence}% < {min_confidence}%"
         if not analysis.can_trade:
-            if analysis.confidence >= 25:
+            if analysis.confidence >= 20 or analysis.details.get("adx", 0) >= 18:
                 return True, f"Allowing with {analysis.confidence}% confidence"
             return False, analysis.block_reason or "Regime block"
         if analysis.trade_mode == "TREND":
             if analysis.regime in [BTCRegime.STRONG_BULL, BTCRegime.BULL] and alt_direction != "LONG":
-                if analysis.confidence >= 25:
+                if analysis.confidence >= 20:
                     return True, f"Direction mismatch but confidence {analysis.confidence}%"
                 return False, f"BTC {analysis.regime.value} but trying {alt_direction}"
             if analysis.regime in [BTCRegime.STRONG_BEAR, BTCRegime.BEAR] and alt_direction != "SHORT":
-                if analysis.confidence >= 25:
+                if analysis.confidence >= 20:
                     return True, f"Direction mismatch but confidence {analysis.confidence}%"
                 return False, f"BTC {analysis.regime.value} but trying {alt_direction}"
         return True, f"{analysis.trade_mode} | {analysis.regime.value}"
