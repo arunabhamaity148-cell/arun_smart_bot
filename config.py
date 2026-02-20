@@ -16,7 +16,7 @@ WEBHOOK_PORT = int(os.getenv("PORT", "8080"))
 # ======================================================
 # EXCHANGE SETTINGS (Binance for data only)
 # ======================================================
-PRIMARY_EXCHANGE = "binance"  # ← এই লাইন যোগ করুন
+PRIMARY_EXCHANGE = "binance"
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
 BINANCE_SECRET = os.getenv("BINANCE_SECRET", "")
 
@@ -96,7 +96,7 @@ COOLDOWN_MINUTES = 20
 # ======================================================
 # FEAR & GREED
 # ======================================================
-FEAR_GREED_API = "https://api.alternative.me/fng/?limit=1"
+FEAR_GREED_API_URL = "https://api.alternative.me/fng/?limit=1"
 FEAR_INDEX_THRESHOLD = 80  # Don't trade above 80 (extreme greed)
 
 # ======================================================
