@@ -1,11 +1,14 @@
 """
 ARUNABHA EXTREME FEAR BOT v3.2
 Conservative Elite Institutional Configuration
-UPDATED FOR LIVE MARKET - Feb 2026
+UPDATED FOR LIVE MARKET - OPTION 3 (Balanced Risk)
 """
 
 import os
+import logging
 from typing import List
+
+logger = logging.getLogger(__name__)
 
 # ═════════════════════════════════════════════════════════════════════════════
 # TELEGRAM CONFIGURATION
@@ -30,64 +33,58 @@ PRIMARY_EXCHANGE = os.getenv("PRIMARY_EXCHANGE", "binance")
 # TRADING UNIVERSE - Elite Mode: Focused Quality
 # ═════════════════════════════════════════════════════════════════════════════
 
-# Conservative: Only high-liquidity, proven pairs
 TRADING_PAIRS = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
-
-# Timeframes
 TIMEFRAMES = ["5m", "15m", "1h"]
 TIMEFRAME = "15m"
 
 # ═════════════════════════════════════════════════════════════════════════════
-# CONSERVATIVE ELITE INSTITUTIONAL SETTINGS
+# ACCOUNT CONFIGURATION
 # ═════════════════════════════════════════════════════════════════════════════
 
-# Account Configuration
-DEFAULT_ACCOUNT_SIZE = float(os.getenv("ACCOUNT_SIZE", "5000"))  # Default $5K for serious trading
+DEFAULT_ACCOUNT_SIZE = float(os.getenv("ACCOUNT_SIZE", "60000"))  # ₹60,000 for ₹500/day target
 
 # ═════════════════════════════════════════════════════════════════════════════
-# CORE SIGNAL THRESHOLDS - Adjusted for live market
+# CORE SIGNAL THRESHOLDS - OPTION 3 (Balanced)
 # ═════════════════════════════════════════════════════════════════════════════
 
 RSI_PERIOD = 14
-RSI_OVERSOLD = 32        # 35 থেকে কমিয়ে 32 (বিয়ার মার্কেটে বেশি oversold হয়)
-RSI_OVERBOUGHT = 68      # 65 থেকে বাড়িয়ে 68
+RSI_OVERSOLD = 30
+RSI_OVERBOUGHT = 70
 EMA_FAST = 9
 EMA_SLOW = 21
 EMA_TREND = 200
-VOLUME_MULTIPLIER = 1.1  # 1.2 থেকে কমিয়ে 1.1
+VOLUME_MULTIPLIER = 1.1
 
 # ═════════════════════════════════════════════════════════════════════════════
-# RISK MANAGEMENT - Elite Capital Protection
+# RISK MANAGEMENT - TIGHTER FOR SAFETY
 # ═════════════════════════════════════════════════════════════════════════════
 
 ATR_PERIOD = 14
-ATR_SL_MULT = 1.5        # Tighter than 1.8
-ATR_TP_MULT = 3.0        # 2:1 minimum RR (3.0/1.5 = 2.0)
+ATR_SL_MULT = 1.3        # 1.5 → 1.3 (টাইট SL - লোকসান কমাবে)
+ATR_TP_MULT = 2.8        # 3.0 → 2.8 (R/R 2.15:1)
 
-# FIX 8: Strict 2.0 minimum R:R ratio
-MIN_RR_RATIO = 2.0
-
-LEVERAGE = 10            # Reduced from 15 for conservative approach
-RISK_PCT = 1.0           # Reduced from 1.5% - Elite capital protection
+MIN_RR_RATIO = 1.8       # 2.0 → 1.8 (আরও ট্রেডের জন্য)
+LEVERAGE = 8             # 10 → 8 (কম লিভারেজ = কম রিস্ক)
+RISK_PCT = 0.7           # 1.0% → 0.7% (নিরাপদ)
 
 # ═════════════════════════════════════════════════════════════════════════════
-# EXTREME FEAR ENGINE - Adjusted for live market
+# EXTREME FEAR ENGINE - OPTION 3
 # ═════════════════════════════════════════════════════════════════════════════
 
-EXTREME_FEAR_RSI = 25        # 28 থেকে কমিয়ে 25 (বিয়ার মার্কেটে বেশি extreme)
-EXTREME_FEAR_VOLUME_MULT = 2.0   # 2.5 থেকে কমিয়ে 2.0
-BEAR_TRAP_WICK_MULT = 2.0    # 2.5 থেকে কমিয়ে 2.0
-LIQUIDITY_SWEEP_PCT = 0.3   # 0.25 থেকে বাড়িয়ে 0.3
-FUNDING_EXTREME = -0.0005    # -0.0003 থেকে কমিয়ে -0.0005 (আরও extreme)
+EXTREME_FEAR_RSI = 24
+EXTREME_FEAR_VOLUME_MULT = 2.0
+BEAR_TRAP_WICK_MULT = 2.0
+LIQUIDITY_SWEEP_PCT = 0.3
+FUNDING_EXTREME = -0.0005
 
-# Elite Grade Settings - Relaxed for live market
-MIN_SCORE_TO_TRADE = 45      # 55 থেকে কমিয়ে 45
+# OPTION 3: Balanced thresholds
+MIN_SCORE_TO_TRADE = 25        # 45 → 25 (আরও ট্রেড)
 REQUIRE_EMA200_CONFIRM = True
-REQUIRE_STRUCTURE_SHIFT = True
+REQUIRE_STRUCTURE_SHIFT = False  # True → False (নরম)
 ENTRY_CONFIRMATION_WAIT = True
 
 # ═════════════════════════════════════════════════════════════════════════════
-# SIMPLE FILTERS - Relaxed for live market
+# SIMPLE FILTERS - OPTION 3
 # ═════════════════════════════════════════════════════════════════════════════
 
 FILTERS = {
@@ -98,51 +95,46 @@ FILTERS = {
     "funding_safe": True,
     "cooldown_ok": True,
     "ema200_confirm": True,
-    "structure_shift": True,
+    "structure_shift": False,
 }
 
-# FIX 4: Relaxed filter enforcement for live market
-MIN_FILTERS_PASS = 4     # 6 থেকে কমিয়ে 4 (বিয়ার মার্কেটে বেশি সুযোগ দিতে)
+MIN_FILTERS_PASS = 3           # 4 → 3 (আরও ট্রেড)
 
 # ═════════════════════════════════════════════════════════════════════════════
-# ELITE TRADE LIMITS - Relaxed for live market
+# TRADE LIMITS - OPTION 3
 # ═════════════════════════════════════════════════════════════════════════════
 
-MAX_SIGNALS_DAY = 4      # 3 থেকে বাড়িয়ে 4 (বিয়ার মার্কেটে বেশি সুযোগ)
-MAX_CONCURRENT = 1       # Single exposure only
-COOLDOWN_MINUTES = 30    # 45 থেকে কমিয়ে 30
+MAX_SIGNALS_DAY = 5            # 4 → 5 (টার্গেট ৫-৬ সিগন্যাল)
+MAX_CONCURRENT = 1             # Single exposure only (নিরাপদ)
+COOLDOWN_MINUTES = 20          # 30 → 20 (দ্রুত পরবর্তী ট্রেড)
 
-# FIX 3: More relaxed greed threshold
-FEAR_INDEX_STOP = 80     # 75 থেকে বাড়িয়ে 80 (greed-এও ট্রেড করতে দেবে)
+FEAR_INDEX_STOP = 85           # 80 → 85 (greed-এও ট্রেড)
 
 # ═════════════════════════════════════════════════════════════════════════════
-# SESSION TIMES (IST) - Relaxed for live market
+# SESSION TIMES (IST)
 # ═════════════════════════════════════════════════════════════════════════════
 
 LONDON_OPEN_IST = 13
 NY_OPEN_IST = 18
 ASIA_CLOSE_IST = 9
 
-# Elite: Only trade London/NY overlap for best liquidity
-ELITE_SESSIONS_ONLY = False  # True থেকে False (যেকোনো সেশনে ট্রেড করতে দেবে)
+ELITE_SESSIONS_ONLY = False    # সব সেশনে ট্রেড
 
 # ═════════════════════════════════════════════════════════════════════════════
-# BREAK-EVEN & TRADE MANAGEMENT
+# TRADE MANAGEMENT - TIGHTER FOR SAFETY
 # ═════════════════════════════════════════════════════════════════════════════
 
-# FIX 9: Configurable break-even trigger
-BREAK_EVEN_TRIGGER_PCT = 0.5   # 0.6 থেকে কমিয়ে 0.5 (আগেই break-even এ নিয়ে যাবে)
-PARTIAL_EXIT_R = 1.0           # 1R partial exit
+BREAK_EVEN_TRIGGER_PCT = 0.4   # 0.5 → 0.4 (আগেই break-even)
+PARTIAL_EXIT_R = 0.8           # 1.0 → 0.8 (আগেই পার্শিয়াল এক্সিট)
 
-# FIX 10: Consecutive SL limit
-MAX_CONSECUTIVE_SL = 3         # 2 থেকে বাড়িয়ে 3 (৩টা SL-এর পর lock)
+MAX_CONSECUTIVE_SL = 2         # 3 → 2 (২টা লোকসানে স্টপ)
 
 # ═════════════════════════════════════════════════════════════════════════════
 # BOT IDENTITY
 # ═════════════════════════════════════════════════════════════════════════════
 
-BOT_NAME = "ARUNABHA CONSERVATIVE ELITE"
-BOT_VERSION = "v3.2-Institutional-Live"
+BOT_NAME = "ARUNABHA BALANCED ELITE"
+BOT_VERSION = "v3.2-Option3"
 
 # ═════════════════════════════════════════════════════════════════════════════
 # EXTERNAL APIS
@@ -151,35 +143,23 @@ BOT_VERSION = "v3.2-Institutional-Live"
 FEAR_GREED_API_URL = "https://api.alternative.me/fng/?limit=1"
 
 # ═════════════════════════════════════════════════════════════════════════════
-# ELITE MODE VALIDATION - Disabled for live market
+# CONFIG VALIDATION
 # ═════════════════════════════════════════════════════════════════════════════
 
-def validate_elite_config():
-    """
-    Validate that Elite Mode settings are correctly configured.
-    Called on startup to ensure institutional discipline.
-    """
+def validate_config():
+    """Light validation - won't crash"""
     checks = {
-        "MIN_RR_RATIO >= 2.0": MIN_RR_RATIO >= 2.0,
-        "RISK_PCT <= 1.5": RISK_PCT <= 1.5,
-        "MAX_SIGNALS_DAY <= 5": MAX_SIGNALS_DAY <= 5,
+        "MIN_RR_RATIO >= 1.5": MIN_RR_RATIO >= 1.5,
+        "RISK_PCT <= 1.0": RISK_PCT <= 1.0,
+        "MAX_SIGNALS_DAY <= 6": MAX_SIGNALS_DAY <= 6,
         "LEVERAGE <= 10": LEVERAGE <= 10,
-        "MIN_FILTERS_PASS >= 3": MIN_FILTERS_PASS >= 3,  # 5 থেকে কমিয়ে 3
-        "FEAR_INDEX_STOP <= 85": FEAR_INDEX_STOP <= 85,  # 80 থেকে বাড়িয়ে 85
     }
     
     failed = [k for k, v in checks.items() if not v]
-    
     if failed:
-        logger.warning(f"⚠️ Elite Mode validation warnings: {failed}")
-        return False  # Exception না দিয়ে warning দেবে
+        print(f"⚠️ Config warnings: {failed}")
     
     return True
 
-# Auto-validate on import - but don't crash
-try:
-    import logging
-    logger = logging.getLogger(__name__)
-    validate_elite_config()
-except:
-    pass
+# Auto-validate
+validate_config()
