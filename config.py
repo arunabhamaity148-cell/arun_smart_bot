@@ -37,20 +37,32 @@ PRIMARY_TF = "15m"
 # ======================================================
 ACCOUNT_SIZE = 100000  # ₹1,00,000
 RISK_PER_TRADE = 1.0  # 1% = ₹1000 risk per trade
-MAX_LEVERAGE = 15  # You'll use manually
+LEVERAGE = 15  # Max leverage
 
 # ======================================================
 # TRADE LIMITS
 # ======================================================
 MAX_CONCURRENT = 1           # একসাথে কতগুলো ট্রেড নেবেন
 MAX_SIGNALS_DAY = 6          # দিনে কতগুলো সিগন্যাল নেবেন
+MAX_CONSECUTIVE_LOSS = 2     # Stop after 2 losses
+MAX_DAILY_LOSS = 3.0         # Stop if 3% down in a day
 
 # ======================================================
-# ATR SETTINGS (CRITICAL - যোগ করা হলো)
+# ATR SETTINGS
 # ======================================================
-ATR_SL_MULT = 1.5        # Stop Loss multiplier (TRENDING mode)
-ATR_TP_MULT = 3.0        # Take Profit multiplier (TRENDING mode)
+ATR_SL_MULT = 1.5        # Stop Loss multiplier
+ATR_TP_MULT = 3.0        # Take Profit multiplier
 ATR_PERIOD = 14          # ATR period
+
+# ======================================================
+# RISK-REWARD SETTINGS (FIXED: যোগ করা হয়েছে)
+# ======================================================
+MIN_RR_RATIO = 1.5        # Minimum Risk-Reward Ratio
+
+# ======================================================
+# ENTRY CONFIRMATION (FIXED: যোগ করা হয়েছে)
+# ======================================================
+ENTRY_CONFIRMATION_WAIT = True  # Wait for confirmation
 
 # ======================================================
 # CONFIDENCE THRESHOLDS
@@ -112,15 +124,14 @@ VOLUME_MULT = 1.2
 # ======================================================
 BREAK_EVEN_AT = 0.4  # Move SL to entry at 0.4R
 PARTIAL_EXIT_AT = 0.8  # Take 50% profit at 0.8R
-MAX_CONSECUTIVE_LOSS = 2  # Stop after 2 losses
-MAX_DAILY_LOSS = 3.0  # Stop if 3% down in a day
 COOLDOWN_MINUTES = 20
 
 # ======================================================
 # FEAR & GREED
 # ======================================================
 FEAR_GREED_API_URL = "https://api.alternative.me/fng/?limit=1"
-FEAR_INDEX_THRESHOLD = 80  # Don't trade above 80 (extreme greed)
+FEAR_INDEX_STOP = 75  # Stop trading above this (extreme greed)
+FEAR_INDEX_THRESHOLD = 80  # Don't trade above 80
 
 # ======================================================
 # MARKET SESSIONS (IST)
