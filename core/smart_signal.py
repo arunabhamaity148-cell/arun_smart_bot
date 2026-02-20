@@ -1,6 +1,6 @@
 """
 ARUNABHA SMART SIGNAL v4.0 - FINAL
-Conservative Elite Institutional Mode - OPTION 3
+With config-based confidence thresholds
 """
 
 import logging
@@ -92,10 +92,10 @@ def generate_signal(
     
     regime_analysis = btc_detector.analyze(btc_ohlcv_15m, btc_ohlcv_1h, btc_ohlcv_4h)
     
-    # ===== OPTION 3: CONFIDENCE-BASED ALLOW =====
+    # ===== IMPROVED: CONFIDENCE-BASED ALLOW (থ্রেশহোল্ড কনফিগ থেকে) =====
     if not regime_analysis.can_trade:
         # confidence ভালো থাকলে ট্রেড করতে দেবে
-        if regime_analysis.confidence >= 25:
+        if regime_analysis.confidence >= config.CONFIDENCE["MIN_CONFIDENCE_ALLOW"]:
             logger.warning("⚠️ Regime gate says BLOCK but confidence %d%% - allowing", 
                           regime_analysis.confidence)
         else:
@@ -110,7 +110,8 @@ def generate_signal(
     
     logger.info("[STEP 2] VOLATILITY COMPRESSION")
     
-    atr = _calculate_atr(ohlcv_15m)
+    from utils.indicators import calculate_atr
+    atr = calculate_atr(ohlcv_15m)
     current_price = ohlcv_15m[-1][4]
     atr_pct = (atr / current_price) * 100 if current_price > 0 else 0
     
@@ -152,17 +153,18 @@ def generate_signal(
     
     direction = engine_result["direction"]
     
-    # Direction check for trend mode
+    # Direction check for trend mode with config threshold
     if trade_mode == "TREND":
+        min_dir_conf = config.CONFIDENCE["MIN_CONFIDENCE_DIRECTION"]
         if regime_analysis.regime in [BTCRegime.STRONG_BULL, BTCRegime.BULL] and direction != "LONG":
-            if regime_analysis.confidence < 30:
+            if regime_analysis.confidence < min_dir_conf:
                 logger.error("❌ BLOCK: Direction mismatch - BTC bull but SHORT signal")
                 return None
             else:
                 logger.warning("⚠️ Direction mismatch but confidence %d%% - allowing", 
                               regime_analysis.confidence)
         if regime_analysis.regime in [BTCRegime.STRONG_BEAR, BTCRegime.BEAR] and direction != "SHORT":
-            if regime_analysis.confidence < 30:
+            if regime_analysis.confidence < min_dir_conf:
                 logger.error("❌ BLOCK: Direction mismatch - BTC bear but LONG signal")
                 return None
             else:
@@ -189,7 +191,7 @@ def generate_signal(
         logger.error("❌ BLOCK: Score %d < minimum %d for %s mode", score, min_score, trade_mode)
         return None
     
-    # Grade validation (OPTION 3: C grade allowed if score good)
+    # Grade validation
     if grade == "C" and score < 30:
         logger.error("❌ BLOCK: Grade C with low score")
         return None
@@ -489,15 +491,5 @@ def _build_insight(mood: Dict, engine: Dict, filters: int, direction: str, mode:
 
 
 def _calculate_atr(ohlcv: List[List[float]], period: int = 14) -> float:
-    if len(ohlcv) < period + 1:
-        return 0.0
-    
-    trs = []
-    for i in range(1, len(ohlcv)):
-        high = ohlcv[i][2]
-        low = ohlcv[i][3]
-        prev_close = ohlcv[i-1][4]
-        tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
-        trs.append(tr)
-    
-    return sum(trs[-period:]) / period
+    from utils.indicators import calculate_atr as calc_atr
+    return calc_atr(ohlcv, period)
