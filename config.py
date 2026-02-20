@@ -1,165 +1,137 @@
 """
-ARUNABHA EXTREME FEAR BOT v3.2
-Conservative Elite Institutional Configuration
-UPDATED FOR LIVE MARKET - OPTION 3 (Balanced Risk)
+ARUNABHA FINAL v4.0 - COMPLETE CONFIG
+Market Adaptive | Indian Exchange Ready | TDS/GST Included
 """
 
 import os
-import logging
-from typing import List
+from typing import Dict, Any
 
-logger = logging.getLogger(__name__)
-
-# ═════════════════════════════════════════════════════════════════════════════
-# TELEGRAM CONFIGURATION
-# ═════════════════════════════════════════════════════════════════════════════
-
+# ======================================================
+# TELEGRAM SETTINGS
+# ======================================================
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
 WEBHOOK_PORT = int(os.getenv("PORT", "8080"))
 
-# ═════════════════════════════════════════════════════════════════════════════
-# EXCHANGE CONFIGURATION
-# ═════════════════════════════════════════════════════════════════════════════
-
+# ======================================================
+# EXCHANGE SETTINGS (Binance for data only)
+# ======================================================
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
 BINANCE_SECRET = os.getenv("BINANCE_SECRET", "")
-COINDCX_API_KEY = os.getenv("COINDCX_API_KEY", "")
-COINDCX_SECRET = os.getenv("COINDCX_SECRET", "")
-PRIMARY_EXCHANGE = os.getenv("PRIMARY_EXCHANGE", "binance")
 
-# ═════════════════════════════════════════════════════════════════════════════
-# TRADING UNIVERSE - Elite Mode: Focused Quality
-# ═════════════════════════════════════════════════════════════════════════════
+# Indian Exchange Settings (for profit calculation)
+INDIAN_EXCHANGE = "CoinDCX"  # or "Delta"
+TDS_RATE = 1.0  # 1% TDS on profit
+GST_RATE = 18.0  # 18% GST on brokerage
 
+# ======================================================
+# TRADING PAIRS
+# ======================================================
 TRADING_PAIRS = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
 TIMEFRAMES = ["5m", "15m", "1h"]
-TIMEFRAME = "15m"
+PRIMARY_TF = "15m"
 
-# ═════════════════════════════════════════════════════════════════════════════
-# ACCOUNT CONFIGURATION
-# ═════════════════════════════════════════════════════════════════════════════
+# ======================================================
+# CAPITAL & RISK (₹1 Lakh)
+# ======================================================
+ACCOUNT_SIZE = 100000  # ₹1,00,000
+RISK_PER_TRADE = 1.0  # 1% = ₹1000 risk per trade
+MAX_LEVERAGE = 15  # You'll use manually
 
-DEFAULT_ACCOUNT_SIZE = float(os.getenv("ACCOUNT_SIZE", "60000"))  # ₹60,000 for ₹500/day target
+# ======================================================
+# MARKET ADAPTIVE SETTINGS
+# ======================================================
+MARKET_CONFIGS = {
+    "TRENDING": {
+        "min_score": 25,
+        "min_filters": 3,
+        "min_rr": 2.0,
+        "max_trades": 6,
+        "sl_mult": 1.5,
+        "tp_mult": 3.0,
+        "position_size": 1.0
+    },
+    "CHOPPY": {
+        "min_score": 20,
+        "min_filters": 2,
+        "min_rr": 1.5,
+        "max_trades": 4,
+        "sl_mult": 1.2,
+        "tp_mult": 1.8,
+        "position_size": 0.8
+    },
+    "HIGH_VOL": {
+        "min_score": 30,
+        "min_filters": 4,
+        "min_rr": 2.5,
+        "max_trades": 3,
+        "sl_mult": 1.0,
+        "tp_mult": 2.5,
+        "position_size": 0.5
+    }
+}
 
-# ═════════════════════════════════════════════════════════════════════════════
-# CORE SIGNAL THRESHOLDS - OPTION 3 (Balanced)
-# ═════════════════════════════════════════════════════════════════════════════
-
+# ======================================================
+# TECHNICAL INDICATORS
+# ======================================================
 RSI_PERIOD = 14
 RSI_OVERSOLD = 30
 RSI_OVERBOUGHT = 70
 EMA_FAST = 9
 EMA_SLOW = 21
 EMA_TREND = 200
-VOLUME_MULTIPLIER = 1.1
-
-# ═════════════════════════════════════════════════════════════════════════════
-# RISK MANAGEMENT - TIGHTER FOR SAFETY
-# ═════════════════════════════════════════════════════════════════════════════
-
+VOLUME_MULT = 1.2
 ATR_PERIOD = 14
-ATR_SL_MULT = 1.3        # 1.5 → 1.3 (টাইট SL - লোকসান কমাবে)
-ATR_TP_MULT = 2.8        # 3.0 → 2.8 (R/R 2.15:1)
 
-MIN_RR_RATIO = 1.8       # 2.0 → 1.8 (আরও ট্রেডের জন্য)
-LEVERAGE = 8             # 10 → 8 (কম লিভারেজ = কম রিস্ক)
-RISK_PCT = 0.7           # 1.0% → 0.7% (নিরাপদ)
+# ======================================================
+# TRADE MANAGEMENT
+# ======================================================
+BREAK_EVEN_AT = 0.4  # Move SL to entry at 0.4R
+PARTIAL_EXIT_AT = 0.8  # Take 50% profit at 0.8R
+MAX_CONSECUTIVE_LOSS = 2  # Stop after 2 losses
+MAX_DAILY_LOSS = 3.0  # Stop if 3% down in a day
+COOLDOWN_MINUTES = 20
 
-# ═════════════════════════════════════════════════════════════════════════════
-# EXTREME FEAR ENGINE - OPTION 3
-# ═════════════════════════════════════════════════════════════════════════════
+# ======================================================
+# FEAR & GREED
+# ======================================================
+FEAR_GREED_API = "https://api.alternative.me/fng/?limit=1"
+FEAR_INDEX_THRESHOLD = 80  # Don't trade above 80 (extreme greed)
 
-EXTREME_FEAR_RSI = 24
-EXTREME_FEAR_VOLUME_MULT = 2.0
-BEAR_TRAP_WICK_MULT = 2.0
-LIQUIDITY_SWEEP_PCT = 0.3
-FUNDING_EXTREME = -0.0005
+# ======================================================
+# MARKET SESSIONS (IST)
+# ======================================================
+BEST_TIMES = [
+    (13, 15, "London Open"),   # 1PM-3PM
+    (18, 20, "NY Open"),       # 6PM-8PM
+    (7, 9, "Asia Open")        # 7AM-9AM
+]
 
-# OPTION 3: Balanced thresholds
-MIN_SCORE_TO_TRADE = 25        # 45 → 25 (আরও ট্রেড)
-REQUIRE_EMA200_CONFIRM = True
-REQUIRE_STRUCTURE_SHIFT = False  # True → False (নরম)
-ENTRY_CONFIRMATION_WAIT = True
+AVOID_TIMES = [
+    (10, 11, "Lunch"),         # 10AM-11AM
+    (23, 1, "Dead Zone")       # 11PM-1AM
+]
 
-# ═════════════════════════════════════════════════════════════════════════════
-# SIMPLE FILTERS - OPTION 3
-# ═════════════════════════════════════════════════════════════════════════════
-
-FILTERS = {
-    "session_active": True,
-    "btc_trend_ok": True,
-    "mtf_confirm": True,
-    "liquidity_zone": True,
-    "funding_safe": True,
-    "cooldown_ok": True,
-    "ema200_confirm": True,
-    "structure_shift": False,
-}
-
-MIN_FILTERS_PASS = 3           # 4 → 3 (আরও ট্রেড)
-
-# ═════════════════════════════════════════════════════════════════════════════
-# TRADE LIMITS - OPTION 3
-# ═════════════════════════════════════════════════════════════════════════════
-
-MAX_SIGNALS_DAY = 5            # 4 → 5 (টার্গেট ৫-৬ সিগন্যাল)
-MAX_CONCURRENT = 1             # Single exposure only (নিরাপদ)
-COOLDOWN_MINUTES = 20          # 30 → 20 (দ্রুত পরবর্তী ট্রেড)
-
-FEAR_INDEX_STOP = 85           # 80 → 85 (greed-এও ট্রেড)
-
-# ═════════════════════════════════════════════════════════════════════════════
-# SESSION TIMES (IST)
-# ═════════════════════════════════════════════════════════════════════════════
-
-LONDON_OPEN_IST = 13
-NY_OPEN_IST = 18
-ASIA_CLOSE_IST = 9
-
-ELITE_SESSIONS_ONLY = False    # সব সেশনে ট্রেড
-
-# ═════════════════════════════════════════════════════════════════════════════
-# TRADE MANAGEMENT - TIGHTER FOR SAFETY
-# ═════════════════════════════════════════════════════════════════════════════
-
-BREAK_EVEN_TRIGGER_PCT = 0.4   # 0.5 → 0.4 (আগেই break-even)
-PARTIAL_EXIT_R = 0.8           # 1.0 → 0.8 (আগেই পার্শিয়াল এক্সিট)
-
-MAX_CONSECUTIVE_SL = 2         # 3 → 2 (২টা লোকসানে স্টপ)
-
-# ═════════════════════════════════════════════════════════════════════════════
-# BOT IDENTITY
-# ═════════════════════════════════════════════════════════════════════════════
-
-BOT_NAME = "ARUNABHA BALANCED ELITE"
-BOT_VERSION = "v3.2-Option3"
-
-# ═════════════════════════════════════════════════════════════════════════════
-# EXTERNAL APIS
-# ═════════════════════════════════════════════════════════════════════════════
-
-FEAR_GREED_API_URL = "https://api.alternative.me/fng/?limit=1"
-
-# ═════════════════════════════════════════════════════════════════════════════
-# CONFIG VALIDATION
-# ═════════════════════════════════════════════════════════════════════════════
-
-def validate_config():
-    """Light validation - won't crash"""
-    checks = {
-        "MIN_RR_RATIO >= 1.5": MIN_RR_RATIO >= 1.5,
-        "RISK_PCT <= 1.0": RISK_PCT <= 1.0,
-        "MAX_SIGNALS_DAY <= 6": MAX_SIGNALS_DAY <= 6,
-        "LEVERAGE <= 10": LEVERAGE <= 10,
+# ======================================================
+# PROFIT CALCULATION (Indian Exchange)
+# ======================================================
+def calculate_indian_profit(entry: float, exit: float, qty: float, side: str) -> Dict[str, float]:
+    """Calculate profit after TDS/GST for Indian exchanges"""
+    if side == "LONG":
+        gross_pnl = (exit - entry) * qty
+    else:
+        gross_pnl = (entry - exit) * qty
+    
+    if gross_pnl <= 0:
+        return {"net_pnl": gross_pnl, "tds": 0, "gst": 0, "gross": gross_pnl}
+    
+    tds = gross_pnl * (TDS_RATE / 100)
+    gst = gross_pnl * (GST_RATE / 100)  # Simplified, actual calculation differs
+    net_pnl = gross_pnl - tds - gst
+    
+    return {
+        "gross": round(gross_pnl, 2),
+        "tds": round(tds, 2),
+        "gst": round(gst, 2),
+        "net_pnl": round(net_pnl, 2)
     }
-    
-    failed = [k for k, v in checks.items() if not v]
-    if failed:
-        print(f"⚠️ Config warnings: {failed}")
-    
-    return True
-
-# Auto-validate
-validate_config()
