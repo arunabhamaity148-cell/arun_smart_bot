@@ -16,6 +16,7 @@ WEBHOOK_PORT = int(os.getenv("PORT", "8080"))
 # ======================================================
 # EXCHANGE SETTINGS (Binance for data only)
 # ======================================================
+PRIMARY_EXCHANGE = "binance"  # ← এই লাইন যোগ করুন
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
 BINANCE_SECRET = os.getenv("BINANCE_SECRET", "")
 
