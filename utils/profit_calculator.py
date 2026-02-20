@@ -4,7 +4,7 @@ Calculates profit after TDS, GST, and fees
 """
 
 import logging
-from typing import Dict, Optional
+from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 from config import TDS_RATE, GST_RATE
 
@@ -78,6 +78,20 @@ class ProfitCalculator:
     
     def get_daily_summary(self) -> Dict[str, Any]:
         """Get daily profit summary"""
+        if not self.trades:
+            return {
+                "total_trades": 0,
+                "wins": 0,
+                "losses": 0,
+                "win_rate": 0,
+                "gross_pnl": 0,
+                "net_pnl": 0,
+                "total_tds": 0,
+                "total_gst": 0,
+                "total_brokerage": 0,
+                "target_achieved": False
+            }
+        
         total_gross = sum(t.gross_pnl for t in self.trades)
         total_net = sum(t.net_pnl for t in self.trades)
         total_tds = sum(t.tds for t in self.trades)
