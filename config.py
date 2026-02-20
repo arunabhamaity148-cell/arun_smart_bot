@@ -40,6 +40,17 @@ RISK_PER_TRADE = 1.0  # 1% = ₹1000 risk per trade
 MAX_LEVERAGE = 15  # You'll use manually
 
 # ======================================================
+# CONFIDENCE THRESHOLDS (was magic numbers)
+# ======================================================
+CONFIDENCE = {
+    "MIN_CONFIDENCE_ALLOW": 25,      # ২৫% কনফিডেন্স থাকলে ট্রেড করতে দেবে
+    "MIN_CONFIDENCE_DIRECTION": 30,   # ডিরেকশন মিসম্যাচ হলেও ট্রেড করবে
+    "MIN_CONFIDENCE_FORCE": 20,       # ফোর্স ট্রেডের জন্য
+    "ADX_HIGH_CONFIDENCE": 25,        # ADX ২৫+ হলে হাই কনফিডেন্স
+    "ADX_MED_CONFIDENCE": 20,         # ADX ২০-২৫ মিড কনফিডেন্স
+}
+
+# ======================================================
 # MARKET ADAPTIVE SETTINGS
 # ======================================================
 MARKET_CONFIGS = {
